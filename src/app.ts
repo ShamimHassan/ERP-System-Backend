@@ -10,6 +10,9 @@ import { env } from './config/env';
 import { fail, ok } from './lib/response';
 import authRoutes from './modules/auth/auth.routes';
 import usersRoutes from './modules/users/users.routes';
+import servicesRoutes from './modules/catalog/services.routes';
+import categoriesRoutes from './modules/catalog/categories.routes';
+import productsRoutes from './modules/catalog/products.routes';
 import { authenticate, authorize, scopeData } from './middleware/auth';
 
 const app = express();
@@ -41,6 +44,9 @@ app.get('/', (_req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
+app.use('/api/services', servicesRoutes);
+app.use('/api/categories', categoriesRoutes);
+app.use('/api/products', productsRoutes);
 
 app.get('/api/test/any-authenticated', authenticate, (_req, res) => {
   ok(res, { message: 'Any authenticated user can see this', user: _req.user });
