@@ -8,6 +8,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { env } from './config/env';
 import { fail, ok } from './lib/response';
+import authRoutes from './modules/auth/auth.routes';
 
 const app = express();
 
@@ -35,6 +36,8 @@ app.get('/health', (_req, res) => {
 app.get('/', (_req, res) => {
   ok(res, { message: 'Hello World from ERP Backend!' });
 });
+
+app.use('/api/auth', authRoutes);
 
 app.use((_req, res) => {
   fail(res, 404, {
