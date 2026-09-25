@@ -9,6 +9,7 @@ import morgan from 'morgan';
 import { env } from './config/env';
 import { fail, ok } from './lib/response';
 import authRoutes from './modules/auth/auth.routes';
+import usersRoutes from './modules/users/users.routes';
 import { authenticate, authorize, scopeData } from './middleware/auth';
 
 const app = express();
@@ -39,6 +40,7 @@ app.get('/', (_req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/users', usersRoutes);
 
 app.get('/api/test/any-authenticated', authenticate, (_req, res) => {
   ok(res, { message: 'Any authenticated user can see this', user: _req.user });

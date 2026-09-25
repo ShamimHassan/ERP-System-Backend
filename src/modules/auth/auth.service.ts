@@ -23,6 +23,14 @@ export const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 });
 
+export const changePasswordSchema = z.object({
+  oldPassword: z.string().min(1, 'Old password is required'),
+  newPassword: z
+    .string()
+    .min(8, 'New password must be at least 8 characters')
+    .max(100),
+});
+
 export interface LoginResult {
   user: {
     id: string;
@@ -155,6 +163,30 @@ export async function me(userId: string) {
     });
   }
   return user;
+}
+
+export async function changePassword(
+  userId: string,
+  raw: unknown
+): Promise<{ changed: boolean }> {
+  const input = changePasswordSchema.parse(raw);
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user || user.deletedAt) {
+    throw Object.assign(new Error('User not found'), {
+      code: 'NOT_FOUND',
+      status: 404,
+    });
+  }
+  const matches = await bcrypt.compare(input.oldPassword, user.passwordHash);
+  if (!matches) {
+    throw Object.assign(new Error('Old password is incorrect'), {
+      code: 'INVALID_OLD_PASSWORD',
+      status: 400,
+    });
+  }
+  const passwordHash = await bcrypt.hash(input.newPassword, env.BCRYPT_ROUNDS);
+  await prisma.user.update({ where: { id: userId }, data: { passwordHash } });
+  return { changed: true };
 }
 
 export async function ensureDemoAdmin(): Promise<void> {

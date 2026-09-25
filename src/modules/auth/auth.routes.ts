@@ -8,6 +8,7 @@ import {
   logout,
   me,
   ensureDemoAdmin,
+  changePassword,
   type LoginResult,
 } from './auth.service';
 
@@ -87,5 +88,18 @@ router.get('/me', authenticate, async (req: Request, res: Response) => {
     return handleServiceError(res, err);
   }
 });
+
+router.post(
+  '/change-password',
+  authenticate,
+  async (req: Request, res: Response) => {
+    try {
+      const result = await changePassword(req.user!.id, req.body);
+      return ok(res, result);
+    } catch (err) {
+      return handleServiceError(res, err);
+    }
+  }
+);
 
 export default router;
