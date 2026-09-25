@@ -1,6 +1,7 @@
 import { type NextFunction, type Request, type Response } from 'express';
 import { verifyAccessToken } from '../config/jwt';
 import { fail } from '../lib/response';
+import { getVisibleUserIds } from '../lib/rbac';
 import type { Role } from '@prisma/client';
 
 export function authenticate(
@@ -52,5 +53,27 @@ export function authorize(allowedRoles: Role[]) {
       });
     }
     return next();
+  };
+}
+
+export function scopeData() {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return fail(res, 401, {
+        code: 'UNAUTHORIZED',
+        message: 'Authentication required',
+      });
+    }
+    try {
+      req.visibleUserIds = await getVisibleUserIds(req.user);
+      return next();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to scope data';
+      return fail(res, 500, {
+        code: 'SCOPE_ERROR',
+        message,
+      });
+    }
   };
 }

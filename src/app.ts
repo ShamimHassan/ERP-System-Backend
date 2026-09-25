@@ -9,6 +9,7 @@ import morgan from 'morgan';
 import { env } from './config/env';
 import { fail, ok } from './lib/response';
 import authRoutes from './modules/auth/auth.routes';
+import { authenticate, authorize, scopeData } from './middleware/auth';
 
 const app = express();
 
@@ -38,6 +39,41 @@ app.get('/', (_req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+
+app.get('/api/test/any-authenticated', authenticate, (_req, res) => {
+  ok(res, { message: 'Any authenticated user can see this', user: _req.user });
+});
+
+app.get(
+  '/api/test/admin-only',
+  authenticate,
+  authorize(['ADMIN']),
+  (_req, res) => {
+    ok(res, { message: 'Admin only content' });
+  }
+);
+
+app.get(
+  '/api/test/marketing-only',
+  authenticate,
+  authorize(['MARKETING']),
+  (_req, res) => {
+    ok(res, { message: 'Marketing only content' });
+  }
+);
+
+app.get(
+  '/api/test/scoped',
+  authenticate,
+  scopeData(),
+  (_req, res) => {
+    ok(res, {
+      message: 'Scoped data view',
+      role: _req.user?.role,
+      visibleUserIds: _req.visibleUserIds,
+    });
+  }
+);
 
 app.use((_req, res) => {
   fail(res, 404, {
