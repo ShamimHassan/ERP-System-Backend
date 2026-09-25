@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,4 +5,574 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  MARKETING
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum LeadSource {
+  WEBSITE
+  FACEBOOK
+  GOOGLE
+  PHONE
+  EMAIL
+  REFERRAL
+  EXISTING_CUSTOMER
+  DIGITAL_MARKETING
+  PARTNER
+  OTHER
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  PROPOSAL
+  NEGOTIATION
+  WON
+  LOST
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum CustomerType {
+  INDIVIDUAL
+  BUSINESS
+  CORPORATE
+  GOVERNMENT
+  PARTNER
+}
+
+enum OpportunityStage {
+  QUALIFICATION
+  REQUIREMENT_ANALYSIS
+  SURVEY
+  PROPOSAL
+  NEGOTIATION
+  DECISION
+  WON
+  LOST
+}
+
+enum ActivityRelatedType {
+  LEAD
+  CUSTOMER
+  OPPORTUNITY
+}
+
+enum ActivityType {
+  CALL
+  MEETING
+  FOLLOW_UP
+  SURVEY
+  EMAIL
+  DEMO
+  SITE_VISIT
+  OTHER
+}
+
+enum SurveyStatus {
+  PENDING
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum BillingType {
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  ONE_TIME
+}
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  VIEWED
+  NEGOTIATION
+  APPROVED
+  REJECTED
+  EXPIRED
+  CONVERTED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum SalesOrderStatus {
+  DRAFT
+  CONFIRMED
+  PROCESSING
+  COMPLETED
+  CANCELLED
+}
+
+enum InvoiceStatus {
+  ISSUED
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum PeriodType {
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+enum Metric {
+  NEW_LEADS
+  QUALIFIED_LEADS
+  CALLS
+  MEETINGS
+  SURVEYS
+  FOLLOW_UPS
+  QUOTATIONS
+  WON_DEALS
+  NEW_CUSTOMERS
+  REVENUE
+  COLLECTION
+  CONVERSION_RATE
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  ASSIGN
+  REASSIGN
+  PRICE_CHANGE
+  DISCOUNT_CHANGE
+  PRICE_APPROVAL
+  QUOTATION_APPROVAL
+  QUOTATION_REJECTION
+  ORDER_CREATE
+  ORDER_CANCEL
+  STATUS_CHANGE
+}
+
+model User {
+  id              String     @id @default(uuid())
+  name            String
+  email           String     @unique
+  passwordHash    String
+  role            Role       @default(MARKETING)
+  managerId       String?
+  manager         User?      @relation("Team", fields: [managerId], references: [id])
+  team            User[]     @relation("Team")
+  status          UserStatus @default(ACTIVE)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  deletedAt       DateTime?
+
+  leadsAsManager         Lead[]          @relation("LeadManager")
+  leadsAsMarketing       Lead[]          @relation("LeadMarketing")
+  customersAsManager     Customer[]      @relation("CustomerManager")
+  customersAsMarketing   Customer[]      @relation("CustomerMarketing")
+  oppsAsManager          Opportunity[]   @relation("OpportunityManager")
+  oppsAsMarketing        Opportunity[]   @relation("OpportunityMarketing")
+  quotationsAsManager    Quotation[]     @relation("QuotationManager")
+  quotationsAsMarketing  Quotation[]     @relation("QuotationMarketing")
+  ordersAsManager        SalesOrder[]    @relation("OrderManager")
+  ordersAsMarketing      SalesOrder[]    @relation("OrderMarketing")
+  approvalsRequested     PriceApproval[] @relation("ApprovalRequester")
+  approvalsDecided       PriceApproval[] @relation("ApprovalApprover")
+  assignedActivities     Activity[]
+  assignedSurveys        Survey[]
+  productPrices          ProductPrice[]
+  priceHistories         ProductPriceHistory[]
+  targets                Target[]
+  kpis                   Kpi[]
+  auditLogs              AuditLog[]
+
+  @@index([role])
+  @@index([managerId])
+  @@index([status])
+}
+
+model Service {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  status      UserStatus @default(ACTIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  categories  ProductCategory[]
+  products    Product[]
+  leads         Lead[]
+  opportunities Opportunity[]
+  surveys       Survey[]
+}
+
+model ProductCategory {
+  id        String   @id @default(uuid())
+  serviceId String
+  service   Service  @relation(fields: [serviceId], references: [id])
+  name      String
+  status    UserStatus @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products  Product[]
+  leads     Lead[]
+  opportunities Opportunity[]
+
+  @@unique([serviceId, name])
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  categoryId  String
+  category    ProductCategory? @relation(fields: [categoryId], references: [id])
+  name        String
+  description String?
+  unit        String
+  status      UserStatus @default(ACTIVE)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  serviceId   String?
+  service     Service?  @relation(fields: [serviceId], references: [id])
+
+  prices          ProductPrice[]
+  quotationItems  QuotationItem[]
+  salesOrderItems SalesOrderItem[]
+  leads           Lead[]
+  opportunities   Opportunity[]
+  surveys         Survey[]
+}
+
+model ProductPrice {
+  id            String      @id @default(uuid())
+  productId     String
+  product       Product   @relation(fields: [productId], references: [id])
+  regularPrice  Decimal
+  sellingPrice  Decimal
+  minimumPrice  Decimal
+  billingType   BillingType
+  effectiveDate DateTime
+  status        UserStatus  @default(ACTIVE)
+  createdById   String
+  createdBy     User      @relation(fields: [createdById], references: [id])
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  history       ProductPriceHistory[]
+  approvals     PriceApproval[]
+
+  @@index([productId, status, effectiveDate])
+}
+
+model ProductPriceHistory {
+  id              String       @id @default(uuid())
+  productPriceId  String
+  productPrice    ProductPrice @relation(fields: [productPriceId], references: [id])
+  oldPrice        Decimal
+  newPrice        Decimal
+  changedById     String
+  changedBy       User         @relation(fields: [changedById], references: [id])
+  changedAt       DateTime     @default(now())
+}
+
+model Lead {
+  id                String      @id @default(uuid())
+  leadName          String
+  companyName       String
+  phone             String
+  email             String?
+  address           String?
+  leadSource        LeadSource
+  serviceId         String?
+  service           Service?     @relation(fields: [serviceId], references: [id])
+  categoryId        String?
+  category          ProductCategory? @relation(fields: [categoryId], references: [id])
+  productId         String?
+  product           Product?    @relation(fields: [productId], references: [id])
+  estimatedValue    Decimal?
+  managerId         String
+  manager           User        @relation("LeadManager", fields: [managerId], references: [id])
+  marketingPersonId String
+  marketingPerson   User        @relation("LeadMarketing", fields: [marketingPersonId], references: [id])
+  priority          Priority
+  status            LeadStatus
+  nextFollowUp      DateTime? @db.Date
+  notes             String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  deletedAt         DateTime?
+
+  opportunities     Opportunity[]
+  customer          Customer?   @relation("LeadCustomer")
+  surveys           Survey[]
+
+  @@index([marketingPersonId, status])
+  @@index([managerId])
+}
+
+model Customer {
+  id                    String       @id @default(uuid())
+  customerType          CustomerType
+  companyName           String?
+  contactPerson         String
+  phone                 String
+  email                 String?
+  address               String?
+  billingAddress        String?
+  taxVatNo              String?
+  managerId             String
+  manager               User         @relation("CustomerManager", fields: [managerId], references: [id])
+  marketingPersonId     String
+  marketingPerson       User         @relation("CustomerMarketing", fields: [marketingPersonId], references: [id])
+  status                UserStatus   @default(ACTIVE)
+  convertedFromLeadId   String?      @unique
+  convertedFromLead     Lead?        @relation("LeadCustomer", fields: [convertedFromLeadId], references: [id])
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  deletedAt             DateTime?
+
+  quotations            Quotation[]
+  salesOrders           SalesOrder[]
+  opportunities         Opportunity[]
+  surveys               Survey[]
+}
+
+model Opportunity {
+  id                    String           @id @default(uuid())
+  name                  String
+  leadId                String?
+  lead                  Lead?            @relation(fields: [leadId], references: [id])
+  customerId            String?
+  customer              Customer?        @relation(fields: [customerId], references: [id])
+  serviceId             String?
+  service               Service?         @relation(fields: [serviceId], references: [id])
+  categoryId            String?
+  category              ProductCategory? @relation(fields: [categoryId], references: [id])
+  productId             String?
+  product               Product?         @relation(fields: [productId], references: [id])
+  estimatedValue        Decimal?
+  expectedClosingDate   DateTime? @db.Date
+  managerId             String
+  manager               User             @relation("OpportunityManager", fields: [managerId], references: [id])
+  marketingPersonId     String
+  marketingPerson       User             @relation("OpportunityMarketing", fields: [marketingPersonId], references: [id])
+  stage                 OpportunityStage
+  notes                 String?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  quotations            Quotation[]
+  surveys               Survey[]
+}
+
+model Activity {
+  id              String              @id @default(uuid())
+  relatedType     ActivityRelatedType
+  relatedId       String
+  assignedUserId  String
+  assignedUser    User                @relation(fields: [assignedUserId], references: [id])
+  type            ActivityType
+  activityDate    DateTime  @db.Date
+  activityTime    String?
+  outcome         String?
+  nextFollowUp    DateTime? @db.Date
+  notes           String?
+  status          UserStatus        @default(ACTIVE)
+  createdAt       DateTime          @default(now())
+
+  @@index([relatedType, relatedId])
+  @@index([assignedUserId, activityDate])
+}
+
+model Survey {
+  id                    String        @id @default(uuid())
+  customerId            String?
+  customer              Customer?     @relation(fields: [customerId], references: [id])
+  leadId                String?
+  lead                  Lead?         @relation(fields: [leadId], references: [id])
+  opportunityId         String
+  opportunity           Opportunity   @relation(fields: [opportunityId], references: [id])
+  location              String
+  requirement           String
+  serviceId             String?
+  service               Service?      @relation(fields: [serviceId], references: [id])
+  productId             String?
+  product               Product?      @relation(fields: [productId], references: [id])
+  technicalRequirement  String?
+  quantity              Int?
+  budget                Decimal?
+  surveyDate            DateTime @db.Date
+  assignedPersonId      String
+  assignedPerson        User          @relation(fields: [assignedPersonId], references: [id])
+  result                String?
+  notes                 String?
+  attachments           Json?
+  status                SurveyStatus
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+}
+
+model Quotation {
+  id                  String          @id @default(uuid())
+  quotationNumber     String          @unique
+  customerId          String
+  customer            Customer      @relation(fields: [customerId], references: [id])
+  opportunityId       String?
+  opportunity         Opportunity?  @relation(fields: [opportunityId], references: [id])
+  managerId           String
+  manager             User          @relation("QuotationManager", fields: [managerId], references: [id])
+  marketingPersonId   String
+  marketingPerson     User          @relation("QuotationMarketing", fields: [marketingPersonId], references: [id])
+  quotationDate       DateTime @db.Date
+  expiryDate          DateTime @db.Date
+  discountTotal       Decimal
+  taxTotal            Decimal
+  grandTotal          Decimal
+  paymentTerms        String?
+  notes               String?
+  status              QuotationStatus
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  items               QuotationItem[]
+  salesOrder          SalesOrder?
+}
+
+model QuotationItem {
+  id            String        @id @default(uuid())
+  quotationId   String
+  quotation     Quotation   @relation(fields: [quotationId], references: [id])
+  productId     String
+  product       Product     @relation(fields: [productId], references: [id])
+  quantity      Int
+  unitPrice     Decimal
+  discount      Decimal
+  tax           Decimal
+  lineTotal     Decimal
+
+  approvals     PriceApproval[]
+}
+
+model PriceApproval {
+  id               String          @id @default(uuid())
+  quotationItemId  String
+  quotationItem    QuotationItem   @relation(fields: [quotationItemId], references: [id])
+  productPriceId   String?
+  productPrice     ProductPrice?   @relation(fields: [productPriceId], references: [id])
+  requestedPrice   Decimal
+  minimumPrice     Decimal
+  requestedById    String
+  requestedBy      User            @relation("ApprovalRequester", fields: [requestedById], references: [id])
+  approverId       String?
+  approver         User?           @relation("ApprovalApprover", fields: [approverId], references: [id])
+  status           ApprovalStatus
+  requestedAt      DateTime        @default(now())
+  decidedAt        DateTime?
+  remarks          String?
+}
+
+model SalesOrder {
+  id                     String           @id @default(uuid())
+  orderNumber            String           @unique
+  customerId             String
+  customer               Customer       @relation(fields: [customerId], references: [id])
+  quotationId            String           @unique
+  quotation              Quotation      @relation(fields: [quotationId], references: [id])
+  managerId              String
+  manager                User           @relation("OrderManager", fields: [managerId], references: [id])
+  marketingPersonId      String
+  marketingPerson        User           @relation("OrderMarketing", fields: [marketingPersonId], references: [id])
+  orderDate              DateTime @db.Date
+  expectedActivationDate DateTime? @db.Date
+  discountTotal          Decimal
+  taxTotal               Decimal
+  grandTotal             Decimal
+  paymentTerms           String?
+  status                 SalesOrderStatus
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+
+  items                  SalesOrderItem[]
+  invoice                Invoice?
+}
+
+model SalesOrderItem {
+  id            String      @id @default(uuid())
+  salesOrderId  String
+  salesOrder    SalesOrder  @relation(fields: [salesOrderId], references: [id])
+  productId     String
+  product       Product     @relation(fields: [productId], references: [id])
+  quantity      Int
+  unitPrice     Decimal
+  discount      Decimal
+  tax           Decimal
+  lineTotal     Decimal
+}
+
+model Invoice {
+  id            String        @id @default(uuid())
+  salesOrderId  String        @unique
+  salesOrder    SalesOrder    @relation(fields: [salesOrderId], references: [id])
+  invoiceNumber String        @unique
+  amount        Decimal
+  status        InvoiceStatus
+  issuedAt      DateTime      @default(now())
+  paidAt        DateTime?
+}
+
+model Target {
+  id           String     @id @default(uuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id])
+  periodType   PeriodType
+  periodStart  DateTime @db.Date
+  periodEnd    DateTime @db.Date
+  metric       Metric
+  targetValue  Decimal
+
+  @@unique([userId, periodType, periodStart, metric])
+}
+
+model Kpi {
+  id          String     @id @default(uuid())
+  userId      String
+  user        User       @relation(fields: [userId], references: [id])
+  periodStart DateTime @db.Date
+  periodEnd   DateTime @db.Date
+  metric      Metric
+  actualValue Decimal
+  computedAt  DateTime   @default(now())
+
+  @@index([userId, periodStart, metric])
+}
+
+model AuditLog {
+  id         String       @id @default(uuid())
+  userId     String
+  user       User         @relation(fields: [userId], references: [id])
+  action     AuditAction
+  module     String
+  recordId   String
+  oldValue   Json?
+  newValue   Json?
+  ipAddress  String?
+  createdAt  DateTime     @default(now())
+
+  @@index([userId, action, createdAt])
+  @@index([module, recordId])
 }
