@@ -1,0 +1,40 @@
+{
+  "name": "erp-system-backend",
+  "version": "1.0.0",
+  "description": "Develop a functional **Sales & Marketing Management Module** for an ERP system. The purpose of this task is to evaluate the ability to understand business requirements, design a scalable database, implement role-based access control, build APIs, develop a professional ERP interface, and manage a complete sales lifecycle.",
+  "main": "index.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "build": "tsup src/server.ts --format cjs --out-dir dist",
+    "start": "node dist/server.js",
+    "seed": "npx prisma db seed",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ShamimHassan/ERP-System-Backend.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/ShamimHassan/ERP-System-Backend/issues"
+  },
+  "homepage": "https://github.com/ShamimHassan/ERP-System-Backend#readme",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "helmet": "^8.3.0",
+    "morgan": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/morgan": "^1.9.10",
+    "@types/node": "^26.6.2",
+    "ts-node-dev": "^2.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.5.4"
+  }
+}
