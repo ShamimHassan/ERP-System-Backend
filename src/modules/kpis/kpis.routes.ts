@@ -17,7 +17,7 @@ function actorOf(req: Request): Actor {
 // GET /api/kpis
 router.get('/', authenticate, scopeData(), validate(listQuerySchema, 'query'), async (req: Request, res: Response) => {
   try {
-    const { rows, meta } = await getKpis(actorOf(req), req.visibleUserIds ?? null, req.query as Record<string, unknown>);
+    const { rows, meta } = await getKpis(actorOf(req), req.visibleUserIds ?? null, (req.parsedQuery ?? req.query) as Record<string, unknown>);
     return ok(res, rows, meta);
   } catch (err) { return handleError(res, err); }
 });
@@ -25,7 +25,7 @@ router.get('/', authenticate, scopeData(), validate(listQuerySchema, 'query'), a
 // GET /api/kpis/targets
 router.get('/targets', authenticate, scopeData(), validate(listQuerySchema, 'query'), async (req: Request, res: Response) => {
   try {
-    const { data, meta } = await listTargets(actorOf(req), req.query as Record<string, unknown>);
+    const { data, meta } = await listTargets(actorOf(req), (req.parsedQuery ?? req.query) as Record<string, unknown>);
     return ok(res, data, meta);
   } catch (err) { return handleError(res, err); }
 });
@@ -55,3 +55,4 @@ router.post(
 );
 
 export default router;
+

@@ -13,7 +13,7 @@ const router = Router();
 // GET /api/services
 router.get('/', authenticate, validate(listQuerySchema, 'query'), async (req: Request, res: Response) => {
   try {
-    const result = await listServices(req.query as Record<string, unknown>);
+    const result = await listServices((req.parsedQuery ?? req.query) as Record<string, unknown>);
     return ok(res, result.data, result.meta);
   } catch (err) { return handleError(res, err); }
 });
@@ -51,3 +51,4 @@ router.delete('/:id', authenticate, authorize(['ADMIN']), async (req: Request, r
 });
 
 export default router;
+

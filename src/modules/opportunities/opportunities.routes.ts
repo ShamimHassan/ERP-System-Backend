@@ -14,7 +14,7 @@ const router = Router();
 // GET /api/opportunities
 router.get('/', authenticate, scopeData(), validate(listQuerySchema, 'query'), async (req: Request, res: Response) => {
   try {
-    const result = await listOpportunities(req.query as Record<string, unknown>, req.visibleUserIds ?? null);
+    const result = await listOpportunities((req.parsedQuery ?? req.query) as Record<string, unknown>, req.visibleUserIds ?? null);
     return ok(res, result.data, result.meta);
   } catch (err) { return handleError(res, err); }
 });
@@ -50,3 +50,4 @@ router.patch('/:id', authenticate, scopeData(), validate(updateOpportunitySchema
 });
 
 export default router;
+

@@ -25,7 +25,7 @@ router.get(
     try {
       const result = await listAuditLogs(
         { actor: actorOf(req), visibleUserIds: req.visibleUserIds ?? null },
-        req.query as unknown as Parameters<typeof listAuditLogs>[1]
+        (req.parsedQuery ?? req.query) as unknown as Parameters<typeof listAuditLogs>[1]
       );
       return ok(res, result.data, result.meta);
     } catch (err) { return handleError(res, err); }
@@ -33,3 +33,4 @@ router.get(
 );
 
 export default router;
+

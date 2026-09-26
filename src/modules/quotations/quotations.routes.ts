@@ -22,7 +22,7 @@ const actorOf = (req: Request) => ({
 // GET /api/quotations
 router.get('/', authenticate, scopeData(), validate(listQuerySchema, 'query'), async (req: Request, res: Response) => {
   try {
-    const result = await listQuotations(req.query as Record<string, unknown>, req.visibleUserIds ?? null);
+    const result = await listQuotations((req.parsedQuery ?? req.query) as Record<string, unknown>, req.visibleUserIds ?? null);
     return ok(res, result.data, result.meta);
   } catch (err) { return handleError(res, err); }
 });
@@ -100,3 +100,4 @@ router.post('/:id/convert-to-order', authenticate, scopeData(), async (req: Requ
 });
 
 export default router;
+

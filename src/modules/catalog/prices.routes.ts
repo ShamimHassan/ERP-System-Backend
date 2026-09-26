@@ -16,7 +16,7 @@ const router = Router({ mergeParams: true });
 // GET /api/products/:productId/prices
 router.get('/', authenticate, validate(listQuerySchema, 'query'), async (req: Request, res: Response) => {
   try {
-    const result = await listPrices(String(req.params.productId), req.query as Record<string, unknown>);
+    const result = await listPrices(String(req.params.productId), (req.parsedQuery ?? req.query) as Record<string, unknown>);
     return ok(res, result.data, result.meta);
   } catch (err) { return handleError(res, err); }
 });
@@ -32,7 +32,7 @@ router.get('/current', authenticate, async (req: Request, res: Response) => {
 // GET /api/products/:productId/prices/history
 router.get('/history', authenticate, validate(listQuerySchema, 'query'), async (req: Request, res: Response) => {
   try {
-    const result = await getPriceHistory(String(req.params.productId), req.query as Record<string, unknown>);
+    const result = await getPriceHistory(String(req.params.productId), (req.parsedQuery ?? req.query) as Record<string, unknown>);
     return ok(res, result.data, result.meta);
   } catch (err) { return handleError(res, err); }
 });
@@ -57,3 +57,4 @@ router.patch('/:priceId', authenticate, authorize(['ADMIN']), validate(createPri
 });
 
 export default router;
+

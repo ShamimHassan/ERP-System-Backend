@@ -4,19 +4,31 @@ import { fail } from '../lib/response';
 
 type Target = 'body' | 'query' | 'params';
 
+// Extend Express Request to carry the parsed/coerced query
+declare global {
+  namespace Express {
+    interface Request {
+      parsedQuery?: Record<string, unknown>;
+    }
+  }
+}
+
 /**
  * validate(schema, target?)
  *
  * Express middleware that parses req[target] through a Zod schema.
  * On failure → 400 VALIDATION_ERROR with per-field details.
- * On success → attaches the parsed (coerced/stripped) value back onto req[target]
- * so downstream handlers receive cleaned data.
+ *
+ * For 'body'  → writes coerced data back to req.body (writable in Express 5)
+ * For 'query' → stores coerced data on req.parsedQuery (req.query is readonly in Express 5)
+ * For 'params'→ writes back to req.params
  *
  * Default target: 'body'
  */
 export function validate(schema: z.ZodTypeAny, target: Target = 'body') {
   return (req: Request, res: Response, next: NextFunction): void => {
-    const result = schema.safeParse(req[target]);
+    const source = target === 'query' ? req.query : req[target];
+    const result = schema.safeParse(source);
     if (!result.success) {
       const details = result.error.issues.map((issue) => ({
         field: issue.path.join('.') || target,
@@ -29,9 +41,14 @@ export function validate(schema: z.ZodTypeAny, target: Target = 'body') {
       });
       return;
     }
-    // Write the coerced/parsed value back so handlers get clean types
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (req as any)[target] = result.data;
+
+    if (target === 'body' || target === 'params') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (req as any)[target] = result.data;
+    } else {
+      // req.query is readonly in Express 5 — store on req.parsedQuery instead
+      req.parsedQuery = result.data as Record<string, unknown>;
+    }
     next();
   };
 }

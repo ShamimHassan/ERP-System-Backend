@@ -14,7 +14,7 @@ const router = Router();
 // GET /api/activities
 router.get('/', authenticate, scopeData(), validate(listQuerySchema, 'query'), async (req: Request, res: Response) => {
   try {
-    const result = await listActivities(req.query as Record<string, unknown>, req.visibleUserIds ?? null);
+    const result = await listActivities((req.parsedQuery ?? req.query) as Record<string, unknown>, req.visibleUserIds ?? null);
     return ok(res, result.data, result.meta);
   } catch (err) { return handleError(res, err); }
 });
@@ -38,3 +38,4 @@ router.get('/:id', authenticate, scopeData(), async (req: Request, res: Response
 });
 
 export default router;
+

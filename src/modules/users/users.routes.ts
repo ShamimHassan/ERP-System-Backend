@@ -24,14 +24,15 @@ router.get(
   validate(listQuerySchema, 'query'),
   async (req: Request, res: Response) => {
     try {
+      const q = (req.parsedQuery ?? req.query) as Record<string, unknown>;
       const result = await listUsers({
-        page:    req.query.page as string | undefined,
-        limit:   req.query.limit as string | undefined,
-        sort:    req.query.sort as string | undefined,
-        search:  req.query.search as string | undefined,
-        status:  req.query.status as string | undefined,
-        dateFrom: req.query.dateFrom as string | undefined,
-        dateTo:   req.query.dateTo as string | undefined,
+        page:    q.page as string | undefined,
+        limit:   q.limit as string | undefined,
+        sort:    q.sort as string | undefined,
+        search:  q.search as string | undefined,
+        status:  q.status as string | undefined,
+        dateFrom: q.dateFrom as string | undefined,
+        dateTo:   q.dateTo as string | undefined,
         visibleUserIds: req.visibleUserIds ?? null,
       });
       return ok(res, result.data, result.meta);
@@ -105,3 +106,4 @@ router.delete(
 );
 
 export default router;
+

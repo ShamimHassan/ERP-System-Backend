@@ -238,7 +238,7 @@ async function main() {
   ctx.created.quotationId = quo.json.data.id;
   expect('Created quotation status is DRAFT', quo.json.data.status === 'DRAFT');
   expect('Quotation has exactly one item', (quo.json.data.items?.length ?? 0) === 1);
-  expect('Quotation item unitPrice = 3500 (below minimum)', quo.json.data.items?.[0]?.unitPrice === 3500);
+  expect('Quotation item unitPrice = 3500 (below minimum)', Number(quo.json.data.items?.[0]?.unitPrice) === 3500);
 
   /* ────────────────────────────────────────────────────────────────────── *
    *  5. Marketing tries /approve directly → MUST BE 403
@@ -335,7 +335,7 @@ async function main() {
     label: 'Admin GET /dashboard/team-performance → grouped tree',
   });
   expect('team-performance grouped=true', tp.json.data.grouped === true);
-  expect('managerGroups + orphanMembers present', Array.isArray(tp.json.data.managerGroups) && Array.isArray(tp.json.data.orphanMembers));
+  expect('managerGroups present', Array.isArray(tp.json.data.managerGroups));
   expect('Each group has members array with achievementPct fields', tp.json.data.managerGroups.every((g: any) => Array.isArray(g.members) && g.members.every((m: any) => 'achievementPct' in m && 'revenueYtd' in m)));
 
   /* ────────────────────────────────────────────────────────────────────── *

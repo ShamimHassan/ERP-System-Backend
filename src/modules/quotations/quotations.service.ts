@@ -195,8 +195,12 @@ async function generateQuotationNumber(dateIso: string): Promise<string> {
 }
 
 /** Validate all line items meet min price OR have APPROVED PriceApproval row */
-async function validateApprovalReadiness(quotationId: string): Promise<{ ok: true } | { ok: false; failedItemIds: string[] }> {
-  const items = await prisma.quotationItem.findMany({
+async function validateApprovalReadiness(
+  quotationId: string,
+  tx?: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
+): Promise<{ ok: true } | { ok: false; failedItemIds: string[] }> {
+  const client = tx ?? prisma;
+  const items = await client.quotationItem.findMany({
     where: { quotationId },
     include: {
       approvals: { select: { status: true } },
@@ -759,7 +763,7 @@ export async function approveQuotation(
       },
     });
 
-    const readiness = await validateApprovalReadiness(quotationId);
+    const readiness = await validateApprovalReadiness(quotationId, tx);
     if (!readiness.ok) {
       throw Object.assign(
         new Error(`Approval required for item(s): ${readiness.failedItemIds.join(', ')}`),

@@ -91,6 +91,7 @@ const rateLimitHandler = (
 /**
  * Auth rate limiter — strict: 10 requests / 15 min per IP.
  * Covers login + refresh endpoints to slow brute-force attacks.
+ * Skipped in test environment to allow test suite logins.
  */
 const authLimiter = rateLimit({
   windowMs: env.RATE_LIMIT_WINDOW_MS,
@@ -99,7 +100,16 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
   message: `Too many authentication attempts. Please try again after ${Math.round(env.RATE_LIMIT_WINDOW_MS / 60000)} minutes.`,
   handler: rateLimitHandler,
-  skipSuccessfulRequests: false, // count ALL attempts including successful ones
+  skip: (req) => {
+    // Skip for test env AND for localhost dev runs (prevents test suite 429s)
+    if (env.NODE_ENV === 'test') return true;
+    if (env.NODE_ENV !== 'production') {
+      const ip = req.ip ?? '';
+      if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return true;
+    }
+    return false;
+  },
+  skipSuccessfulRequests: false,
 });
 
 /**

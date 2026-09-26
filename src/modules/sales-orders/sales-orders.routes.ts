@@ -19,7 +19,7 @@ const actorOf = (req: Request) => ({
 // GET /api/sales-orders
 router.get('/', authenticate, scopeData(), validate(listQuerySchema, 'query'), async (req: Request, res: Response) => {
   try {
-    const result = await listSalesOrders(req.query as Record<string, unknown>, req.visibleUserIds ?? null);
+    const result = await listSalesOrders((req.parsedQuery ?? req.query) as Record<string, unknown>, req.visibleUserIds ?? null);
     return ok(res, result.data, result.meta);
   } catch (err) { return handleError(res, err); }
 });
@@ -73,3 +73,4 @@ router.post('/:id/cancel', authenticate, scopeData(), async (req: Request, res: 
 });
 
 export default router;
+
