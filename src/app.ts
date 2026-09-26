@@ -6,6 +6,7 @@ import express, {
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
 import { env } from './config/env';
 import { fail, ok } from './lib/response';
@@ -33,16 +34,94 @@ const app = express();
 
 app.set('trust proxy', 1);
 
+// ── CORS ── whitelist only — no wildcard ───────────────────────────────────
 app.use(
   cors({
     origin: env.CORS_ORIGIN,
     credentials: true,
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
-app.use(helmet());
+
+// ── Helmet — base security headers for all routes ─────────────────────────
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc:  ["'self'"],
+        styleSrc:   ["'self'"],
+        imgSrc:     ["'self'", 'data:'],
+        fontSrc:    ["'self'"],
+        connectSrc: ["'self'"],
+        frameSrc:   ["'none'"],
+        objectSrc:  ["'none'"],
+      },
+    },
+    hsts: { maxAge: 31536000, includeSubDomains: true },
+    noSniff: true,
+    xssFilter: true,
+  })
+);
+
 app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+
+// ── Body parsers — enforce hard size limits to prevent payload bloat ───────
 app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+// ══════════════════════════════════════════════════════════════════════════
+// RATE LIMITERS
+// ══════════════════════════════════════════════════════════════════════════
+
+/** Standard 429 response matching the API envelope */
+const rateLimitHandler = (
+  _req: Request,
+  res: Response,
+  _next: NextFunction,
+  options: { message: string }
+) => {
+  fail(res, 429, {
+    code: 'TOO_MANY_REQUESTS',
+    message: options.message,
+  });
+};
+
+/**
+ * Auth rate limiter — strict: 10 requests / 15 min per IP.
+ * Covers login + refresh endpoints to slow brute-force attacks.
+ */
+const authLimiter = rateLimit({
+  windowMs: env.RATE_LIMIT_WINDOW_MS,
+  max: env.RATE_LIMIT_AUTH_MAX,
+  standardHeaders: true,   // Return RateLimit-* headers
+  legacyHeaders: false,
+  message: `Too many authentication attempts. Please try again after ${Math.round(env.RATE_LIMIT_WINDOW_MS / 60000)} minutes.`,
+  handler: rateLimitHandler,
+  skipSuccessfulRequests: false, // count ALL attempts including successful ones
+});
+
+/**
+ * General API rate limiter — generous: 500 requests / 15 min per IP.
+ * Applied to all /api/* routes except auth (which has its own stricter limiter).
+ */
+const apiLimiter = rateLimit({
+  windowMs: env.RATE_LIMIT_WINDOW_MS,
+  max: env.RATE_LIMIT_API_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: `API rate limit exceeded. Please try again after ${Math.round(env.RATE_LIMIT_WINDOW_MS / 60000)} minutes.`,
+  handler: rateLimitHandler,
+  skip: (req) => req.path.startsWith('/api-docs'), // never rate-limit docs
+});
+
+// Apply auth limiter to login + refresh only
+app.use('/api/auth/login',   authLimiter);
+app.use('/api/auth/refresh', authLimiter);
+
+// Apply general limiter to all /api/* routes
+app.use('/api', apiLimiter);
 
 // ── Swagger UI — /api-docs ─────────────────────────────────────────────────
 // Use a custom helmet config for the docs route to allow inline scripts/styles

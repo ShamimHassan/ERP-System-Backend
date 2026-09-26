@@ -13,6 +13,10 @@ const envSchema = z.object({
   JWT_ACCESS_TTL: z.string().default('15m'),
   JWT_REFRESH_TTL: z.string().default('7d'),
   BCRYPT_ROUNDS: z.coerce.number().int().min(4).max(31).default(12),
+  // Rate limiting — per-IP, rolling window
+  RATE_LIMIT_WINDOW_MS:  z.coerce.number().int().positive().default(15 * 60 * 1000), // 15 min
+  RATE_LIMIT_AUTH_MAX:   z.coerce.number().int().positive().default(10),   // auth endpoints
+  RATE_LIMIT_API_MAX:    z.coerce.number().int().positive().default(500),  // general API
 });
 
 const parsed = envSchema.safeParse(process.env);
