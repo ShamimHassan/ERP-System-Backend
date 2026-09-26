@@ -15,7 +15,7 @@
 
 import 'dotenv/config';
 import bcrypt from 'bcrypt';
-import { PrismaClient, LeadSource, LeadStatus, Priority, OpportunityStage, QuotationStatus, SalesOrderStatus, InvoiceStatus, BillingType, CustomerType } from '@prisma/client';
+import { PrismaClient, LeadSource, LeadStatus, Priority, OpportunityStage, QuotationStatus, SalesOrderStatus, InvoiceStatus, BillingType, CustomerType, PeriodType, Metric } from '@prisma/client';
 
 const prisma = new PrismaClient();
 const ROUNDS = parseInt(process.env.BCRYPT_ROUNDS ?? '12', 10);
@@ -444,6 +444,98 @@ async function main() {
   } else if (existingOrder) {
     console.log('  ⏭  Sales order already exists, skipping.');
   }
+
+  /* ── 11. DRAFT Quotation for happy-path below-min approval demo ────────── */
+  const draftQuoNumber = 'QUO-SEED-HAPPY-PATH';
+  const existingDraftQuo = await prisma.quotation.findFirst({ where: { quotationNumber: draftQuoNumber } });
+
+  if (!existingDraftQuo) {
+    // Broadband 50 Mbps: selling 4500, minimum 4000. We'll set unitPrice = 3500
+    // so it is below the minimum price — triggers approval workflow.
+    const bb50Min = productPrices[pBb50.id]!.minimumPrice;      // 4000
+    const belowMinUnitPrice = bb50Min - 500;                    // 3500 (below min)
+    const qty = 6;
+    const lineTotal = belowMinUnitPrice * qty;                   // 21000
+    const hpCustomer = await prisma.customer.findFirst({ where: { marketingPersonId: mktA1.id, deletedAt: null } }) ?? demoCustomer;
+
+    await prisma.quotation.create({
+      data: {
+        quotationNumber:  draftQuoNumber,
+        customerId:       hpCustomer.id,
+        opportunityId:    opp1.id,
+        managerId:        managerA.id,
+        marketingPersonId: mktA1.id,
+        quotationDate:    today(),
+        expiryDate:       daysFromNow(14),
+        discountTotal:    0,
+        taxTotal:         0,
+        grandTotal:       lineTotal,
+        paymentTerms:     'Net 30 days',
+        notes:            'Happy-path demo: below-minimum Broadband 50 Mbps x 6 quote — needs manager approval.',
+        status:           QuotationStatus.DRAFT,
+        items: {
+          create: {
+            productId: pBb50.id,
+            quantity:  qty,
+            unitPrice: belowMinUnitPrice,
+            discount:  0,
+            tax:       0,
+            lineTotal: lineTotal,
+          },
+        },
+      },
+    });
+    console.log(`  ✅ Draft below-min quotation seeded (${draftQuoNumber}, DRAFT — unitPrice 3500 < min 4000)`);
+  } else {
+    console.log('  ⏭  Draft happy-path quotation already exists, skipping.');
+  }
+
+  /* ── 12. KPI Targets — current month (MONTHLY) for all 7 users ────────── */
+  const monthStart = new Date();
+  monthStart.setDate(1); monthStart.setHours(0,0,0,0);
+  const monthEnd = new Date(monthStart);
+  monthEnd.setMonth(monthEnd.getMonth() + 1);
+
+  const targetUsers = [
+    { user: admin,    role: 'ADMIN',     targets: { NEW_LEADS: 200, QUALIFIED_LEADS: 80, CALLS: 500, MEETINGS: 80, SURVEYS: 40, FOLLOW_UPS: 400, QUOTATIONS: 60, WON_DEALS: 20, NEW_CUSTOMERS: 40, REVENUE: 5000000, COLLECTION: 4500000, CONVERSION_RATE: 40 } },
+    { user: managerA, role: 'MANAGER',   targets: { NEW_LEADS: 100, QUALIFIED_LEADS: 40, CALLS: 250, MEETINGS: 40, SURVEYS: 20, FOLLOW_UPS: 200, QUOTATIONS: 30, WON_DEALS: 10, NEW_CUSTOMERS: 20, REVENUE: 2500000, COLLECTION: 2200000, CONVERSION_RATE: 35 } },
+    { user: managerB, role: 'MANAGER',   targets: { NEW_LEADS: 100, QUALIFIED_LEADS: 40, CALLS: 250, MEETINGS: 40, SURVEYS: 20, FOLLOW_UPS: 200, QUOTATIONS: 30, WON_DEALS: 10, NEW_CUSTOMERS: 20, REVENUE: 2500000, COLLECTION: 2200000, CONVERSION_RATE: 35 } },
+    { user: mktA1,    role: 'MARKETING', targets: { NEW_LEADS:  50, QUALIFIED_LEADS: 20, CALLS: 120, MEETINGS: 20, SURVEYS: 10, FOLLOW_UPS: 100, QUOTATIONS: 15, WON_DEALS:  5, NEW_CUSTOMERS: 10, REVENUE: 1200000, COLLECTION: 1100000, CONVERSION_RATE: 30 } },
+    { user: mktA2,    role: 'MARKETING', targets: { NEW_LEADS:  50, QUALIFIED_LEADS: 20, CALLS: 120, MEETINGS: 20, SURVEYS: 10, FOLLOW_UPS: 100, QUOTATIONS: 15, WON_DEALS:  5, NEW_CUSTOMERS: 10, REVENUE: 1200000, COLLECTION: 1100000, CONVERSION_RATE: 30 } },
+    { user: mktB1,    role: 'MARKETING', targets: { NEW_LEADS:  50, QUALIFIED_LEADS: 20, CALLS: 120, MEETINGS: 20, SURVEYS: 10, FOLLOW_UPS: 100, QUOTATIONS: 15, WON_DEALS:  5, NEW_CUSTOMERS: 10, REVENUE: 1200000, COLLECTION: 1100000, CONVERSION_RATE: 30 } },
+    { user: mktB2,    role: 'MARKETING', targets: { NEW_LEADS:  50, QUALIFIED_LEADS: 20, CALLS: 120, MEETINGS: 20, SURVEYS: 10, FOLLOW_UPS: 100, QUOTATIONS: 15, WON_DEALS:  5, NEW_CUSTOMERS: 10, REVENUE: 1200000, COLLECTION: 1100000, CONVERSION_RATE: 30 } },
+  ] as const;
+
+  const targetMetrics = Object.keys(targetUsers[0].targets) as Array<keyof typeof targetUsers[0]['targets']>;
+  let seededTargets = 0;
+  for (const tu of targetUsers) {
+    for (const metric of targetMetrics) {
+      const existing = await prisma.target.findFirst({
+        where: {
+          userId: tu.user.id,
+          periodType: 'MONTHLY',
+          metric,
+          periodStart: monthStart,
+        },
+      });
+      if (!existing) {
+        await prisma.target.create({
+          data: {
+            userId: tu.user.id,
+            periodType: 'MONTHLY',
+            periodStart: monthStart,
+            periodEnd: monthEnd,
+            metric,
+            targetValue: tu.targets[metric],
+          },
+        });
+        seededTargets++;
+      }
+    }
+  }
+  console.log(seededTargets > 0
+    ? `  ✅ KPI targets seeded (${seededTargets} new MONTHLY rows for current period, 7 users × 12 metrics)`
+    : '  ⏭  KPI targets already exist for this month, skipping.');
 
   console.log('\n🎉 Seed complete!\n');
   console.log('Demo accounts:');

@@ -22,6 +22,8 @@ import surveysRoutes from './modules/surveys/surveys.routes';
 import quotationsRoutes from './modules/quotations/quotations.routes';
 import salesOrdersRoutes from './modules/sales-orders/sales-orders.routes';
 import dashboardRoutes from './modules/dashboard/dashboard.routes';
+import kpisRoutes from './modules/kpis/kpis.routes';
+import reportsRoutes from './modules/reports/reports.routes';
 import { authenticate, authorize, scopeData } from './middleware/auth';
 
 const app = express();
@@ -65,6 +67,8 @@ app.use('/api/surveys', surveysRoutes);
 app.use('/api/quotations', quotationsRoutes);
 app.use('/api/sales-orders', salesOrdersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/kpis', kpisRoutes);
+app.use('/api/reports', reportsRoutes);
 
 app.get('/api/test/any-authenticated', authenticate, (_req, res) => {
   ok(res, { message: 'Any authenticated user can see this', user: _req.user });
