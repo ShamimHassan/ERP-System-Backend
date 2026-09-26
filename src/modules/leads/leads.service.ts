@@ -126,19 +126,64 @@ async function resolveOwnership(
   return { marketingPersonId: input.marketingPersonId, managerId: input.managerId };
 }
 
+/* ─── helpers ─────────────────────────────────────────────────────────────── */
+async function validateRelatedIds(
+  ids: { serviceId?: string | null; categoryId?: string | null; productId?: string | null }
+): Promise<void> {
+  const checks: Promise<unknown>[] = [];
+  if (ids.serviceId) {
+    checks.push(
+      prisma.service
+        .findFirst({ where: { id: ids.serviceId, status: 'ACTIVE' } })
+        .then((s) => {
+          if (!s)
+            throw Object.assign(new Error('Service not found or inactive'), {
+              code: 'NOT_FOUND',
+              status: 404,
+            });
+        })
+    );
+  }
+  if (ids.categoryId) {
+    checks.push(
+      prisma.productCategory
+        .findFirst({ where: { id: ids.categoryId, status: 'ACTIVE' } })
+        .then((c) => {
+          if (!c)
+            throw Object.assign(new Error('Category not found or inactive'), {
+              code: 'NOT_FOUND',
+              status: 404,
+            });
+        })
+    );
+  }
+  if (ids.productId) {
+    checks.push(
+      prisma.product
+        .findFirst({ where: { id: ids.productId, status: 'ACTIVE' } })
+        .then((p) => {
+          if (!p)
+            throw Object.assign(new Error('Product not found or inactive'), {
+              code: 'NOT_FOUND',
+              status: 404,
+            });
+        })
+    );
+  }
+  if (checks.length) await Promise.all(checks);
+}
+
 /* ─── List ────────────────────────────────────────────────────────────────── */
 export async function listLeads(
   query: Record<string, unknown>,
   visibleUserIds: string[] | null
 ) {
   const extraWhere: Prisma.LeadWhereInput = {};
-  if (query.status)            extraWhere.status = query.status as LeadStatus;
   if (query.managerId)         extraWhere.managerId = query.managerId as string;
   if (query.marketingPersonId) extraWhere.marketingPersonId = query.marketingPersonId as string;
   if (query.serviceId)         extraWhere.serviceId = query.serviceId as string;
   if (query.priority)          extraWhere.priority = query.priority as Priority;
 
-  // date range on createdAt
   if (query.dateFrom || query.dateTo) {
     extraWhere.createdAt = {};
     if (query.dateFrom) (extraWhere.createdAt as Prisma.DateTimeFilter).gte = new Date(query.dateFrom as string);
@@ -147,19 +192,15 @@ export async function listLeads(
 
   const base = scopedWhere(visibleUserIds, extraWhere);
 
-  const { skip, take, where, page, limit } =
+  const { skip, take, where, orderBy, page, limit } =
     applyListQuery<Prisma.LeadWhereInput>(
       query,
       base,
       ['leadName', 'companyName', 'phone', 'email']
     );
 
-  const sortField = String(query.sort ?? '-createdAt').replace(/^-/, '');
-  const sortDir: Prisma.SortOrder = String(query.sort ?? '').startsWith('-') || !query.sort ? 'desc' : 'asc';
-  const orderBy: Prisma.LeadOrderByWithRelationInput = { [sortField]: sortDir };
-
   const [rows, total] = await Promise.all([
-    prisma.lead.findMany({ where, orderBy, skip, take, select: LEAD_SELECT }),
+    prisma.lead.findMany({ where, orderBy: orderBy as Prisma.LeadOrderByWithRelationInput[], skip, take, select: LEAD_SELECT }),
     prisma.lead.count({ where }),
   ]);
 
@@ -180,6 +221,11 @@ export async function getLead(id: string, visibleUserIds: string[] | null) {
 export async function createLead(raw: unknown, actor: Actor) {
   const input = createLeadSchema.parse(raw);
   const { managerId, marketingPersonId } = await resolveOwnership(input, actor);
+  await validateRelatedIds({
+    serviceId: input.serviceId,
+    categoryId: input.categoryId,
+    productId: input.productId,
+  });
 
   return prisma.lead.create({
     data: {
@@ -218,7 +264,12 @@ export async function updateLead(
 
   const input = updateLeadSchema.parse(raw);
 
-  // Prevent marketing user from re-assigning to someone else
+  await validateRelatedIds({
+    serviceId: input.serviceId,
+    categoryId: input.categoryId,
+    productId: input.productId,
+  });
+
   if (actor.role === 'MARKETING') {
     if (input.marketingPersonId && input.marketingPersonId !== actor.id) {
       throw Object.assign(
@@ -226,13 +277,11 @@ export async function updateLead(
         { code: 'FORBIDDEN', status: 403 }
       );
     }
-    // Silently ignore any attempt to change managerId
     delete (input as Record<string, unknown>).managerId;
   }
 
   if (actor.role === 'MANAGER') {
     if (input.marketingPersonId && input.marketingPersonId !== existing.marketingPersonId) {
-      // Allow reassigning within own team only
       const member = await prisma.user.findFirst({
         where: { id: input.marketingPersonId, managerId: actor.id, deletedAt: null },
       });
@@ -243,6 +292,37 @@ export async function updateLead(
         );
       }
     }
+  }
+
+  if (actor.role === 'ADMIN') {
+    const checks: Promise<unknown>[] = [];
+    if (input.marketingPersonId) {
+      checks.push(
+        prisma.user
+          .findFirst({ where: { id: input.marketingPersonId, deletedAt: null } })
+          .then((u) => {
+            if (!u)
+              throw Object.assign(new Error('Marketing person not found'), {
+                code: 'NOT_FOUND',
+                status: 404,
+              });
+          })
+      );
+    }
+    if (input.managerId) {
+      checks.push(
+        prisma.user
+          .findFirst({ where: { id: input.managerId, deletedAt: null } })
+          .then((u) => {
+            if (!u)
+              throw Object.assign(new Error('Manager not found'), {
+                code: 'NOT_FOUND',
+                status: 404,
+              });
+          })
+      );
+    }
+    if (checks.length) await Promise.all(checks);
   }
 
   const data: Prisma.LeadUncheckedUpdateInput = {};
@@ -295,7 +375,6 @@ export async function convertLead(
   });
   if (!lead) notFound();
 
-  // Already converted?
   const alreadyConverted = await prisma.customer.findUnique({
     where: { convertedFromLeadId: id },
   });
@@ -306,7 +385,12 @@ export async function convertLead(
     );
   }
 
-  const customer = await prisma.$transaction(async (tx) => {
+  const progressedStatuses: LeadStatus[] = [
+    LeadStatus.QUALIFIED, LeadStatus.PROPOSAL,
+    LeadStatus.NEGOTIATION, LeadStatus.WON,
+  ];
+
+  const result = await prisma.$transaction(async (tx) => {
     const cust = await tx.customer.create({
       data: {
         customerType:       'BUSINESS',
@@ -322,20 +406,17 @@ export async function convertLead(
       },
     });
 
-    // Update lead status to QUALIFIED if not already beyond
-    const progressedStatuses: LeadStatus[] = [
-      LeadStatus.QUALIFIED, LeadStatus.PROPOSAL,
-      LeadStatus.NEGOTIATION, LeadStatus.WON,
-    ];
+    let finalLeadStatus: LeadStatus = lead.status;
     if (!progressedStatuses.includes(lead.status)) {
+      finalLeadStatus = LeadStatus.QUALIFIED;
       await tx.lead.update({
         where: { id: lead.id },
-        data: { status: LeadStatus.QUALIFIED },
+        data: { status: finalLeadStatus },
       });
     }
 
-    return cust;
+    return { customerId: cust.id, leadId: id, leadStatus: finalLeadStatus };
   });
 
-  return { customerId: customer.id, leadId: id, leadStatus: LeadStatus.QUALIFIED };
+  return result;
 }
