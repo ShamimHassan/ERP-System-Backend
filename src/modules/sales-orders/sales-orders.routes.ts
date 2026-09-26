@@ -1,13 +1,12 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { authenticate, authorize, scopeData } from '../../middleware/auth';
+import { authenticate, scopeData } from '../../middleware/auth';
 import { ok, fail } from '../../lib/response';
 import type { Role } from '@prisma/client';
 import {
-  listQuotations, getQuotation, createQuotation, updateQuotation,
-  addQuotationItem, deleteQuotationItem,
-  submitApproval, approveQuotation, rejectQuotation,
-} from './quotations.service';
+  listSalesOrders, getSalesOrder, createSalesOrder, updateSalesOrder,
+  addSalesOrderItem, deleteSalesOrderItem,
+} from './sales-orders.service';
 
 const router = Router();
 
@@ -27,85 +26,55 @@ const actorOf = (req: Request) => ({
   id: req.user!.id, role: req.user!.role as Role, managerId: req.user!.managerId,
 });
 
-// GET /api/quotations
+// GET /api/sales-orders
 router.get('/', authenticate, scopeData(), async (req: Request, res: Response) => {
   try {
-    const result = await listQuotations(req.query as Record<string, unknown>, req.visibleUserIds ?? null);
+    const result = await listSalesOrders(req.query as Record<string, unknown>, req.visibleUserIds ?? null);
     return ok(res, result.data, result.meta);
   } catch (err) { return handleError(res, err); }
 });
 
-// POST /api/quotations
+// POST /api/sales-orders
 router.post('/', authenticate, scopeData(), async (req: Request, res: Response) => {
   try {
-    const result = await createQuotation(req.body, actorOf(req));
+    const result = await createSalesOrder(req.body, actorOf(req));
     return ok(res, result);
   } catch (err) { return handleError(res, err); }
 });
 
-// GET /api/quotations/:id
+// GET /api/sales-orders/:id
 router.get('/:id', authenticate, scopeData(), async (req: Request, res: Response) => {
   try {
-    const result = await getQuotation(String(req.params.id), req.visibleUserIds ?? null);
+    const result = await getSalesOrder(String(req.params.id), req.visibleUserIds ?? null);
     return ok(res, result);
   } catch (err) { return handleError(res, err); }
 });
 
-// PATCH /api/quotations/:id
+// PATCH /api/sales-orders/:id
 router.patch('/:id', authenticate, scopeData(), async (req: Request, res: Response) => {
   try {
-    const result = await updateQuotation(
+    const result = await updateSalesOrder(
       String(req.params.id), req.body, actorOf(req), req.visibleUserIds ?? null
     );
     return ok(res, result);
   } catch (err) { return handleError(res, err); }
 });
 
-// POST /api/quotations/:id/items
+// POST /api/sales-orders/:id/items
 router.post('/:id/items', authenticate, scopeData(), async (req: Request, res: Response) => {
   try {
-    const result = await addQuotationItem(
-      String(req.params.id), req.body, actorOf(req), req.visibleUserIds ?? null
+    const result = await addSalesOrderItem(
+      String(req.params.id), req.body, req.visibleUserIds ?? null
     );
     return ok(res, result);
   } catch (err) { return handleError(res, err); }
 });
 
-// DELETE /api/quotations/:id/items/:itemId
+// DELETE /api/sales-orders/:id/items/:itemId
 router.delete('/:id/items/:itemId', authenticate, scopeData(), async (req: Request, res: Response) => {
   try {
-    const result = await deleteQuotationItem(
+    const result = await deleteSalesOrderItem(
       String(req.params.id), String(req.params.itemId), req.visibleUserIds ?? null
-    );
-    return ok(res, result);
-  } catch (err) { return handleError(res, err); }
-});
-
-// POST /api/quotations/:id/submit-approval
-router.post('/:id/submit-approval', authenticate, scopeData(), async (req: Request, res: Response) => {
-  try {
-    const result = await submitApproval(
-      String(req.params.id), actorOf(req), req.visibleUserIds ?? null
-    );
-    return ok(res, result);
-  } catch (err) { return handleError(res, err); }
-});
-
-// POST /api/quotations/:id/approve  (Manager/Admin only)
-router.post('/:id/approve', authenticate, scopeData(), authorize(['MANAGER', 'ADMIN']), async (req: Request, res: Response) => {
-  try {
-    const result = await approveQuotation(
-      String(req.params.id), actorOf(req), req.visibleUserIds ?? null
-    );
-    return ok(res, result);
-  } catch (err) { return handleError(res, err); }
-});
-
-// POST /api/quotations/:id/reject   (Manager/Admin only)
-router.post('/:id/reject', authenticate, scopeData(), authorize(['MANAGER', 'ADMIN']), async (req: Request, res: Response) => {
-  try {
-    const result = await rejectQuotation(
-      String(req.params.id), req.body, actorOf(req), req.visibleUserIds ?? null
     );
     return ok(res, result);
   } catch (err) { return handleError(res, err); }

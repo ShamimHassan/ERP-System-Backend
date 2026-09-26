@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  QuotationStatus, Role, UserStatus,
+  ApprovalStatus, QuotationStatus, Role, UserStatus,
   type Prisma,
 } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
@@ -45,6 +45,10 @@ export const updateQuotationSchema = z.object({
 }).strict();
 
 export const addQuotationItemSchema = quotationItemInput;
+
+export const rejectQuotationSchema = z.object({
+  remarks: z.string().max(1000, 'Remarks cannot exceed 1000 characters'),
+});
 
 /* ─── Actor context ───────────────────────────────────────────────────────── */
 export interface Actor {
@@ -139,6 +143,21 @@ async function getCurrentActivePrice(productId: string): Promise<number | null> 
   return price ? Number(price.sellingPrice) : null;
 }
 
+/** Get current active price record for a product with minimumPrice */
+async function getCurrentActivePriceWithMin(productId: string): Promise<{ id: string; minimumPrice: number; sellingPrice: number } | null> {
+  const price = await prisma.productPrice.findFirst({
+    where: {
+      productId,
+      status: UserStatus.ACTIVE,
+      effectiveDate: { lte: new Date() },
+    },
+    orderBy: { effectiveDate: 'desc' },
+    take: 1,
+    select: { id: true, minimumPrice: true, sellingPrice: true },
+  });
+  return price ? { id: price.id, minimumPrice: Number(price.minimumPrice), sellingPrice: Number(price.sellingPrice) } : null;
+}
+
 /**
  * ⚠️ NEVER trust client totals — recalculate lineTotal for every item
  * and recompute grandTotal = Σ lineTotals - discountTotal + taxTotal_adjusted
@@ -171,6 +190,29 @@ async function generateQuotationNumber(dateIso: string): Promise<string> {
     if (m) seq = parseInt(m[1], 10) + 1;
   }
   return `${prefix}${seq.toString().padStart(4, '0')}`;
+}
+
+/** Validate all line items meet min price OR have APPROVED PriceApproval row */
+async function validateApprovalReadiness(quotationId: string): Promise<{ ok: true } | { ok: false; failedItemIds: string[] }> {
+  const items = await prisma.quotationItem.findMany({
+    where: { quotationId },
+    include: {
+      approvals: { select: { status: true } },
+    },
+  });
+
+  const failed: string[] = [];
+  for (const item of items) {
+    const priceInfo = await getCurrentActivePriceWithMin(item.productId);
+    const minPrice = priceInfo ? priceInfo.minimumPrice : Number(item.unitPrice);
+    const unitPrice = Number(item.unitPrice);
+    if (unitPrice >= minPrice) continue;
+    const hasApproved = item.approvals.some((a) => a.status === ApprovalStatus.APPROVED);
+    if (!hasApproved) failed.push(item.id);
+  }
+
+  if (failed.length) return { ok: false, failedItemIds: failed };
+  return { ok: true };
 }
 
 /* ─── List ────────────────────────────────────────────────────────────────── */
@@ -228,7 +270,6 @@ export async function createQuotation(raw: unknown, actor: Actor) {
 
   const { managerId, marketingPersonId } = await resolveOwnership(input, actor);
 
-  // Validate customer (scoped) and opportunity (scoped) existence
   const [customer, opportunity, productSnapshots] = await Promise.all([
     prisma.customer.findFirst({
       where: { AND: [{ id: input.customerId, deletedAt: null }, ownerFilter('marketingPersonId', visibleIdsOrNullFromActor(actor))] },
@@ -253,12 +294,8 @@ export async function createQuotation(raw: unknown, actor: Actor) {
   if (!customer) throw Object.assign(new Error('Customer not found'), { code: 'NOT_FOUND', status: 404 });
   if (input.opportunityId && !opportunity) throw Object.assign(new Error('Opportunity not found'), { code: 'NOT_FOUND', status: 404 });
 
-  // Build final items: honor client-supplied unitPrice (snapshot override allowed for negotiation)
-  // but default to current active product price if the backend-default-zero is sent (optional)
-  // Policy per spec: "allow override (sales negotiation). Save the value sent"
   const finalItems = productSnapshots.map((it) => {
     let unitPrice = it.unitPrice;
-    // If client passes 0 but we have a default, substitute as a courtesy — unless explicitly 0 intended
     if (unitPrice === 0 && it.defaultPrice !== null) unitPrice = it.defaultPrice;
     return { productId: it.productId, quantity: it.quantity, unitPrice, discount: it.discount, tax: it.tax };
   });
@@ -266,8 +303,6 @@ export async function createQuotation(raw: unknown, actor: Actor) {
   const computedItems = computeLineTotals(finalItems);
   const lineTotalsSum = computedItems.reduce((s, it) => s + it.lineTotal, 0);
 
-  // grandTotal = Σ lineTotals − header discountTotal + header taxTotal
-  // discountTotal & taxTotal are treated as absolute adjustments
   const grandTotal = round2(lineTotalsSum - Number(input.discountTotal) + Number(input.taxTotal));
 
   const quotationNumber = await generateQuotationNumber(input.quotationDate);
@@ -362,7 +397,21 @@ export async function updateQuotation(
     if (checks.length) await Promise.all(checks);
   }
 
-  // Recompute grandTotal whenever discountTotal or taxTotal change
+  if (input.status === QuotationStatus.APPROVED) {
+    if (actor.role === Role.MARKETING) {
+      throw Object.assign(new Error('Marketing users cannot set quotation to APPROVED'), {
+        code: 'FORBIDDEN', status: 403,
+      });
+    }
+    const readiness = await validateApprovalReadiness(id);
+    if (!readiness.ok) {
+      throw Object.assign(
+        new Error(`Approval required for item(s): ${readiness.failedItemIds.join(', ')}`),
+        { code: 'APPROVAL_REQUIRED', status: 409 }
+      );
+    }
+  }
+
   let grandTotal: number | undefined;
   if (input.discountTotal !== undefined || input.taxTotal !== undefined) {
     const [items] = await Promise.all([
@@ -418,7 +467,6 @@ export async function addQuotationItem(
   }
   const [computed] = computeLineTotals([{ ...input, unitPrice }]);
 
-  // Mark actor as unused to satisfy linter pattern (ownership check already done above via findFirst)
   void actor;
 
   const item = await prisma.$transaction(async (tx) => {
@@ -435,7 +483,6 @@ export async function addQuotationItem(
       select: QUOTATION_ITEM_SELECT,
     });
 
-    // Recompute header totals
     const items = await tx.quotationItem.findMany({
       where: { quotationId },
       select: { lineTotal: true },
@@ -478,6 +525,180 @@ export async function deleteQuotationItem(
     await tx.quotation.update({ where: { id: quotationId }, data: { grandTotal } });
 
     return { id: itemId, deleted: true };
+  });
+
+  return result;
+}
+
+/* ─── Submit approval: create PENDING PriceApproval rows for below-min items */
+export async function submitApproval(
+  quotationId: string,
+  actor: Actor,
+  visibleUserIds: string[] | null
+) {
+  const quotation = await prisma.quotation.findFirst({
+    where: { AND: [{ id: quotationId }, ownerFilter('marketingPersonId', visibleUserIds)] },
+    include: {
+      items: true,
+    },
+  });
+  if (!quotation) notFound();
+
+  const created: Array<{ quotationItemId: string; requestedPrice: number; minimumPrice: number }> = [];
+  const skipped: Array<{ quotationItemId: string; reason: string }> = [];
+
+  for (const item of quotation.items) {
+    const priceInfo = await getCurrentActivePriceWithMin(item.productId);
+    if (!priceInfo) {
+      skipped.push({ quotationItemId: item.id, reason: 'No active price found for product' });
+      continue;
+    }
+    const unitPrice = Number(item.unitPrice);
+    const minimumPrice = priceInfo.minimumPrice;
+    if (unitPrice >= minimumPrice) {
+      skipped.push({ quotationItemId: item.id, reason: 'unitPrice >= minimumPrice' });
+      continue;
+    }
+
+    const existingApproval = await prisma.priceApproval.findFirst({
+      where: { quotationItemId: item.id, status: ApprovalStatus.PENDING },
+    });
+    if (existingApproval) {
+      skipped.push({ quotationItemId: item.id, reason: 'PENDING approval already exists' });
+      continue;
+    }
+
+    await prisma.priceApproval.create({
+      data: {
+        quotationItemId: item.id,
+        productPriceId: priceInfo.id,
+        requestedPrice: unitPrice,
+        minimumPrice,
+        requestedById: actor.id,
+        status: ApprovalStatus.PENDING,
+      },
+    });
+    created.push({ quotationItemId: item.id, requestedPrice: unitPrice, minimumPrice });
+  }
+
+  return {
+    quotationId,
+    submitted: created.length,
+    created,
+    skipped,
+  };
+}
+
+/* ─── Approve: set all PENDING approvals to APPROVED + quotation status to APPROVED */
+export async function approveQuotation(
+  quotationId: string,
+  actor: Actor,
+  visibleUserIds: string[] | null
+) {
+  const quotation = await prisma.quotation.findFirst({
+    where: { AND: [{ id: quotationId }, ownerFilter('marketingPersonId', visibleUserIds)] },
+  });
+  if (!quotation) notFound();
+
+  if (actor.role === Role.MARKETING) {
+    throw Object.assign(new Error('Marketing users cannot approve quotations'), {
+      code: 'FORBIDDEN', status: 403,
+    });
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const pending = await tx.priceApproval.findMany({
+      where: {
+        quotationItem: { quotationId },
+        status: ApprovalStatus.PENDING,
+      },
+    });
+
+    await tx.priceApproval.updateMany({
+      where: {
+        id: { in: pending.map((p) => p.id) },
+      },
+      data: {
+        status: ApprovalStatus.APPROVED,
+        approverId: actor.id,
+        decidedAt: new Date(),
+      },
+    });
+
+    const readiness = await validateApprovalReadiness(quotationId);
+    if (!readiness.ok) {
+      throw Object.assign(
+        new Error(`Approval required for item(s): ${readiness.failedItemIds.join(', ')}`),
+        { code: 'APPROVAL_REQUIRED', status: 409 }
+      );
+    }
+
+    const updated = await tx.quotation.update({
+      where: { id: quotationId },
+      data: { status: QuotationStatus.APPROVED },
+      select: QUOTATION_SELECT,
+    });
+
+    return {
+      approved: pending.length,
+      quotation: updated,
+    };
+  });
+
+  return result;
+}
+
+/* ─── Reject: set PENDING approvals to REJECTED + quotation status to REJECTED with remarks */
+export async function rejectQuotation(
+  quotationId: string,
+  raw: unknown,
+  actor: Actor,
+  visibleUserIds: string[] | null
+) {
+  const quotation = await prisma.quotation.findFirst({
+    where: { AND: [{ id: quotationId }, ownerFilter('marketingPersonId', visibleUserIds)] },
+  });
+  if (!quotation) notFound();
+
+  if (actor.role === Role.MARKETING) {
+    throw Object.assign(new Error('Marketing users cannot reject quotations'), {
+      code: 'FORBIDDEN', status: 403,
+    });
+  }
+
+  const input = rejectQuotationSchema.parse(raw);
+
+  const result = await prisma.$transaction(async (tx) => {
+    const pending = await tx.priceApproval.findMany({
+      where: {
+        quotationItem: { quotationId },
+        status: ApprovalStatus.PENDING,
+      },
+    });
+
+    await tx.priceApproval.updateMany({
+      where: {
+        id: { in: pending.map((p) => p.id) },
+      },
+      data: {
+        status: ApprovalStatus.REJECTED,
+        approverId: actor.id,
+        decidedAt: new Date(),
+        remarks: input.remarks,
+      },
+    });
+
+    const updated = await tx.quotation.update({
+      where: { id: quotationId },
+      data: { status: QuotationStatus.REJECTED },
+      select: QUOTATION_SELECT,
+    });
+
+    return {
+      rejected: pending.length,
+      remarks: input.remarks,
+      quotation: updated,
+    };
   });
 
   return result;
