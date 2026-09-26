@@ -8,6 +8,7 @@ import {
   InvoiceStatus,
   LeadStatus,
 } from '@prisma/client';
+import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { ownerFilter } from '../../lib/rbac';
 
@@ -17,6 +18,15 @@ export interface Actor {
   managerId?: string | null;
   ip?: string | null;
 }
+
+/* ─── Zod schemas ─────────────────────────────────────────────────────────── */
+export const createTargetSchema = z.object({
+  userId:      z.string().uuid('userId must be a valid UUID'),
+  periodType:  z.nativeEnum(PeriodType),
+  periodStart: z.string().date('periodStart must be YYYY-MM-DD'),
+  metric:      z.nativeEnum(Metric),
+  targetValue: z.number().positive('targetValue must be a positive number'),
+});
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 

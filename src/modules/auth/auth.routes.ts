@@ -1,7 +1,9 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { authenticate } from '../../middleware/auth';
-import { fail, ok } from '../../lib/response';
+import { validate } from '../../middleware/validate';
+import { handleError } from '../../lib/handle-error';
+import { ok } from '../../lib/response';
 import {
   login,
   refreshToken,
@@ -9,96 +11,62 @@ import {
   me,
   ensureDemoAdmin,
   changePassword,
+  loginSchema,
+  changePasswordSchema,
   type LoginResult,
 } from './auth.service';
 
 const router = Router();
 
-function handleZodError(res: Response, err: unknown) {
-  if (err instanceof z.ZodError) {
-    const details = err.issues.map((i) => ({
-      field: i.path.join('.'),
-      message: i.message,
-    }));
-    return fail(res, 400, {
-      code: 'VALIDATION_ERROR',
-      message: 'Request validation failed',
-      details,
-    });
-  }
-  return null;
-}
+/* refresh body schema — defined here since it's small */
+const refreshSchema = z.object({
+  refreshToken: z.string().min(1, 'refreshToken is required'),
+});
 
-function handleServiceError(res: Response, err: unknown) {
-  if (handleZodError(res, err)) return;
-  const status =
-    err && typeof err === 'object' && 'status' in err
-      ? Number((err as { status: unknown }).status) || 500
-      : 500;
-  const code =
-    err && typeof err === 'object' && 'code' in err
-      ? String((err as { code: unknown }).code)
-      : status === 500
-      ? 'INTERNAL_SERVER_ERROR'
-      : 'BAD_REQUEST';
-  const message =
-    err instanceof Error
-      ? err.message
-      : status === 500
-      ? 'An unexpected error occurred'
-      : 'Bad request';
-  fail(res, status, { code, message });
-}
-
-router.post('/login', async (req: Request, res: Response) => {
+// POST /api/auth/login
+router.post('/login', validate(loginSchema), async (req: Request, res: Response) => {
   try {
     await ensureDemoAdmin();
     const result = (await login(req.body)) as LoginResult;
     return ok(res, result);
-  } catch (err) {
-    return handleServiceError(res, err);
-  }
+  } catch (err) { return handleError(res, err); }
 });
 
-router.post('/refresh', async (req: Request, res: Response) => {
+// POST /api/auth/refresh
+router.post('/refresh', validate(refreshSchema), async (req: Request, res: Response) => {
   try {
     const result = await refreshToken(req.body);
     return ok(res, result);
-  } catch (err) {
-    return handleServiceError(res, err);
-  }
+  } catch (err) { return handleError(res, err); }
 });
 
+// POST /api/auth/logout
 router.post('/logout', authenticate, async (req: Request, res: Response) => {
   try {
-    const userId = req.user!.id;
     const body = req.body as { refreshToken?: string } | undefined;
-    const result = await logout(userId, body?.refreshToken);
+    const result = await logout(req.user!.id, body?.refreshToken);
     return ok(res, result);
-  } catch (err) {
-    return handleServiceError(res, err);
-  }
+  } catch (err) { return handleError(res, err); }
 });
 
+// GET /api/auth/me
 router.get('/me', authenticate, async (req: Request, res: Response) => {
   try {
     const result = await me(req.user!.id);
     return ok(res, result);
-  } catch (err) {
-    return handleServiceError(res, err);
-  }
+  } catch (err) { return handleError(res, err); }
 });
 
+// POST /api/auth/change-password
 router.post(
   '/change-password',
   authenticate,
+  validate(changePasswordSchema),
   async (req: Request, res: Response) => {
     try {
       const result = await changePassword(req.user!.id, req.body);
       return ok(res, result);
-    } catch (err) {
-      return handleServiceError(res, err);
-    }
+    } catch (err) { return handleError(res, err); }
   }
 );
 

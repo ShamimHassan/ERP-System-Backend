@@ -1,7 +1,8 @@
 import { Router, type Request, type Response } from 'express';
-import { z } from 'zod';
 import { authenticate, authorize, scopeData } from '../../middleware/auth';
-import { ok, fail } from '../../lib/response';
+import { validate, listQuerySchema } from '../../middleware/validate';
+import { handleError } from '../../lib/handle-error';
+import { ok } from '../../lib/response';
 import type { Role } from '@prisma/client';
 import {
   createUser,
@@ -9,121 +10,81 @@ import {
   getUser,
   listUsers,
   updateUser,
+  createUserSchema,
+  updateUserSchema,
 } from './users.service';
 
 const router = Router();
 
-function handleZodError(res: Response, err: unknown) {
-  if (err instanceof z.ZodError) {
-    const details = err.issues.map((i) => ({
-      field: i.path.join('.'),
-      message: i.message,
-    }));
-    return fail(res, 400, {
-      code: 'VALIDATION_ERROR',
-      message: 'Request validation failed',
-      details,
-    });
-  }
-  return null;
-}
-
-function handleServiceError(res: Response, err: unknown) {
-  if (handleZodError(res, err)) return;
-  const status =
-    err && typeof err === 'object' && 'status' in err
-      ? Number((err as { status: unknown }).status) || 500
-      : 500;
-  const code =
-    err && typeof err === 'object' && 'code' in err
-      ? String((err as { code: unknown }).code)
-      : status === 500
-      ? 'INTERNAL_SERVER_ERROR'
-      : 'BAD_REQUEST';
-  const message =
-    err instanceof Error
-      ? err.message
-      : status === 500
-      ? 'An unexpected error occurred'
-      : 'Bad request';
-  fail(res, status, { code, message });
-}
-
+// GET /api/users
 router.get(
   '/',
   authenticate,
   scopeData(),
+  validate(listQuerySchema, 'query'),
   async (req: Request, res: Response) => {
     try {
       const result = await listUsers({
-        page: req.query.page as string | number | undefined,
-        limit: req.query.limit as string | number | undefined,
-        sort: req.query.sort as string | undefined,
-        search: req.query.search as string | undefined,
-        status: req.query.status as string | undefined,
+        page:    req.query.page as string | undefined,
+        limit:   req.query.limit as string | undefined,
+        sort:    req.query.sort as string | undefined,
+        search:  req.query.search as string | undefined,
+        status:  req.query.status as string | undefined,
         visibleUserIds: req.visibleUserIds ?? null,
       });
       return ok(res, result.data, result.meta);
-    } catch (err) {
-      return handleServiceError(res, err);
-    }
+    } catch (err) { return handleError(res, err); }
   }
 );
 
+// POST /api/users
 router.post(
   '/',
   authenticate,
   authorize(['ADMIN']),
+  validate(createUserSchema),
   async (req: Request, res: Response) => {
     try {
       const result = await createUser(req.body, {
-        id: req.user!.id,
-        role: req.user!.role as Role,
-        ip: req.ip ?? null,
+        id: req.user!.id, role: req.user!.role as Role, ip: req.ip ?? null,
       });
       return ok(res, result);
-    } catch (err) {
-      return handleServiceError(res, err);
-    }
+    } catch (err) { return handleError(res, err); }
   }
 );
 
+// GET /api/users/:id
 router.get(
   '/:id',
   authenticate,
   scopeData(),
   async (req: Request, res: Response) => {
     try {
-      const result = await getUser(
-        String(req.params.id),
-        req.visibleUserIds ?? null
-      );
+      const result = await getUser(String(req.params.id), req.visibleUserIds ?? null);
       return ok(res, result);
-    } catch (err) {
-      return handleServiceError(res, err);
-    }
+    } catch (err) { return handleError(res, err); }
   }
 );
 
+// PATCH /api/users/:id
 router.patch(
   '/:id',
   authenticate,
   scopeData(),
+  validate(updateUserSchema),
   async (req: Request, res: Response) => {
     try {
       const result = await updateUser(
-        String(req.params.id),
-        req.body,
+        String(req.params.id), req.body,
         { id: req.user!.id, role: req.user!.role as Role, ip: req.ip ?? null },
         req.visibleUserIds ?? null
       );
       return ok(res, result);
-    } catch (err) {
-      return handleServiceError(res, err);
-    }
+    } catch (err) { return handleError(res, err); }
   }
 );
 
+// DELETE /api/users/:id
 router.delete(
   '/:id',
   authenticate,
@@ -137,11 +98,8 @@ router.delete(
         req.visibleUserIds ?? null
       );
       return ok(res, result);
-    } catch (err) {
-      return handleServiceError(res, err);
-    }
+    } catch (err) { return handleError(res, err); }
   }
 );
 
 export default router;
-

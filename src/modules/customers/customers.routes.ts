@@ -1,26 +1,18 @@
 import { Router, type Request, type Response } from 'express';
-import { z } from 'zod';
 import { authenticate, scopeData } from '../../middleware/auth';
-import { ok, fail } from '../../lib/response';
+import { validate, listQuerySchema } from '../../middleware/validate';
+import { handleError } from '../../lib/handle-error';
+import { ok } from '../../lib/response';
 import type { Role } from '@prisma/client';
-import { listCustomers, getCustomer, createCustomer, updateCustomer } from './customers.service';
+import {
+  listCustomers, getCustomer, createCustomer, updateCustomer,
+  createCustomerSchema, updateCustomerSchema,
+} from './customers.service';
 
 const router = Router();
 
-function handleError(res: Response, err: unknown): void {
-  if (err instanceof z.ZodError) {
-    const details = err.issues.map((i) => ({ field: i.path.join('.'), message: i.message }));
-    fail(res, 400, { code: 'VALIDATION_ERROR', message: 'Request validation failed', details });
-    return;
-  }
-  const status  = err && typeof err === 'object' && 'status' in err ? Number((err as { status: unknown }).status) || 500 : 500;
-  const code    = err && typeof err === 'object' && 'code'   in err ? String((err as { code:   unknown }).code)   : status === 500 ? 'INTERNAL_SERVER_ERROR' : 'BAD_REQUEST';
-  const message = err instanceof Error ? err.message : 'An unexpected error occurred';
-  fail(res, status, { code, message });
-}
-
 // GET /api/customers
-router.get('/', authenticate, scopeData(), async (req: Request, res: Response) => {
+router.get('/', authenticate, scopeData(), validate(listQuerySchema, 'query'), async (req: Request, res: Response) => {
   try {
     const result = await listCustomers(req.query as Record<string, unknown>, req.visibleUserIds ?? null);
     return ok(res, result.data, result.meta);
@@ -28,9 +20,11 @@ router.get('/', authenticate, scopeData(), async (req: Request, res: Response) =
 });
 
 // POST /api/customers
-router.post('/', authenticate, scopeData(), async (req: Request, res: Response) => {
+router.post('/', authenticate, scopeData(), validate(createCustomerSchema), async (req: Request, res: Response) => {
   try {
-    const result = await createCustomer(req.body, { id: req.user!.id, role: req.user!.role as Role, managerId: req.user!.managerId, ip: req.ip ?? null });
+    const result = await createCustomer(req.body, {
+      id: req.user!.id, role: req.user!.role as Role, managerId: req.user!.managerId, ip: req.ip ?? null,
+    });
     return ok(res, result);
   } catch (err) { return handleError(res, err); }
 });
@@ -44,7 +38,7 @@ router.get('/:id', authenticate, scopeData(), async (req: Request, res: Response
 });
 
 // PATCH /api/customers/:id
-router.patch('/:id', authenticate, scopeData(), async (req: Request, res: Response) => {
+router.patch('/:id', authenticate, scopeData(), validate(updateCustomerSchema), async (req: Request, res: Response) => {
   try {
     const result = await updateCustomer(
       String(req.params.id), req.body,
@@ -56,4 +50,3 @@ router.patch('/:id', authenticate, scopeData(), async (req: Request, res: Respon
 });
 
 export default router;
-

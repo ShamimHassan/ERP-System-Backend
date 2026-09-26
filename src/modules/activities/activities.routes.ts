@@ -1,26 +1,18 @@
 import { Router, type Request, type Response } from 'express';
-import { z } from 'zod';
 import { authenticate, scopeData } from '../../middleware/auth';
-import { ok, fail } from '../../lib/response';
+import { validate, listQuerySchema } from '../../middleware/validate';
+import { handleError } from '../../lib/handle-error';
+import { ok } from '../../lib/response';
 import type { Role } from '@prisma/client';
-import { listActivities, getActivity, createActivity } from './activities.service';
+import {
+  listActivities, getActivity, createActivity,
+  createActivitySchema,
+} from './activities.service';
 
 const router = Router();
 
-function handleError(res: Response, err: unknown): void {
-  if (err instanceof z.ZodError) {
-    const details = err.issues.map((i) => ({ field: i.path.join('.'), message: i.message }));
-    fail(res, 400, { code: 'VALIDATION_ERROR', message: 'Request validation failed', details });
-    return;
-  }
-  const status  = err && typeof err === 'object' && 'status' in err ? Number((err as { status: unknown }).status) || 500 : 500;
-  const code    = err && typeof err === 'object' && 'code'   in err ? String((err as { code:   unknown }).code)   : status === 500 ? 'INTERNAL_SERVER_ERROR' : 'BAD_REQUEST';
-  const message = err instanceof Error ? err.message : 'An unexpected error occurred';
-  fail(res, status, { code, message });
-}
-
 // GET /api/activities
-router.get('/', authenticate, scopeData(), async (req: Request, res: Response) => {
+router.get('/', authenticate, scopeData(), validate(listQuerySchema, 'query'), async (req: Request, res: Response) => {
   try {
     const result = await listActivities(req.query as Record<string, unknown>, req.visibleUserIds ?? null);
     return ok(res, result.data, result.meta);
@@ -28,7 +20,7 @@ router.get('/', authenticate, scopeData(), async (req: Request, res: Response) =
 });
 
 // POST /api/activities
-router.post('/', authenticate, scopeData(), async (req: Request, res: Response) => {
+router.post('/', authenticate, scopeData(), validate(createActivitySchema), async (req: Request, res: Response) => {
   try {
     const result = await createActivity(req.body, {
       id: req.user!.id, role: req.user!.role as Role, managerId: req.user!.managerId, ip: req.ip ?? null,
@@ -46,4 +38,3 @@ router.get('/:id', authenticate, scopeData(), async (req: Request, res: Response
 });
 
 export default router;
-
