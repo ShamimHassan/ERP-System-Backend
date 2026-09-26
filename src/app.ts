@@ -16,6 +16,9 @@ import productsRoutes from './modules/catalog/products.routes';
 import pricesRoutes from './modules/catalog/prices.routes';
 import leadsRoutes from './modules/leads/leads.routes';
 import customersRoutes from './modules/customers/customers.routes';
+import opportunitiesRoutes from './modules/opportunities/opportunities.routes';
+import activitiesRoutes from './modules/activities/activities.routes';
+import surveysRoutes from './modules/surveys/surveys.routes';
 import { authenticate, authorize, scopeData } from './middleware/auth';
 
 const app = express();
@@ -53,6 +56,9 @@ app.use('/api/products', productsRoutes);
 app.use('/api/products/:productId/prices', pricesRoutes);
 app.use('/api/leads', leadsRoutes);
 app.use('/api/customers', customersRoutes);
+app.use('/api/opportunities', opportunitiesRoutes);
+app.use('/api/activities', activitiesRoutes);
+app.use('/api/surveys', surveysRoutes);
 
 app.get('/api/test/any-authenticated', authenticate, (_req, res) => {
   ok(res, { message: 'Any authenticated user can see this', user: _req.user });
