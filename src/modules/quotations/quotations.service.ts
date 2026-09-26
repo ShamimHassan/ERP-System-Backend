@@ -6,6 +6,7 @@ import {
 import { prisma } from '../../lib/prisma';
 import { ownerFilter } from '../../lib/rbac';
 import { applyListQuery, buildMeta } from '../../lib/list-query';
+import { audit, buildFieldChanges } from '../../lib/audit';
 
 /* ─── Zod schemas ─────────────────────────────────────────────────────────── */
 const quotationItemInput = z.object({
@@ -55,6 +56,7 @@ export interface Actor {
   id: string;
   role: Role;
   managerId?: string | null;
+  ip?: string | null;
 }
 
 /* ─── Select shapes ───────────────────────────────────────────────────────── */
@@ -339,6 +341,40 @@ export async function createQuotation(raw: unknown, actor: Actor) {
     return header;
   });
 
+  await audit({
+    actor,
+    module: 'QUOTATIONS',
+    action: 'CREATE',
+    entityId: result.id,
+    entityLabel: result.quotationNumber,
+    summary: `Created quotation ${result.quotationNumber} for customer (grandTotal=${grandTotal})`,
+    details: {
+      customerId: result.customerId,
+      itemsCount: result.items.length,
+      discountTotal: result.discountTotal,
+      taxTotal: result.taxTotal,
+      grandTotal: result.grandTotal,
+      status: result.status,
+    } as unknown as Prisma.InputJsonValue,
+    relatedUserId: result.marketingPersonId,
+  });
+
+  if (Number(input.discountTotal) > 0) {
+    await audit({
+      actor,
+      module: 'QUOTATIONS',
+      action: 'DISCOUNT_CHANGE',
+      entityId: result.id,
+      entityLabel: result.quotationNumber,
+      summary: `Quotation ${result.quotationNumber} created with discount ${input.discountTotal}`,
+      details: {
+        old: { discountTotal: 0, grandTotal: null },
+        new: { discountTotal: input.discountTotal, grandTotal },
+      } as unknown as Prisma.InputJsonValue,
+      relatedUserId: result.marketingPersonId,
+    });
+  }
+
   return result;
 }
 
@@ -439,7 +475,93 @@ export async function updateQuotation(
   if (input.marketingPersonId !== undefined && input.marketingPersonId !== null) data.marketingPersonId = input.marketingPersonId;
   if (grandTotal              !== undefined) data.grandTotal        = grandTotal;
 
-  return prisma.quotation.update({ where: { id }, data, select: QUOTATION_SELECT });
+  const updated = prisma.quotation.update({ where: { id }, data, select: QUOTATION_SELECT });
+
+  void updated.then(async (q) => {
+    const changes = buildFieldChanges(
+      existing as unknown as Record<string, unknown>,
+      data as unknown as Record<string, unknown>
+    );
+    const audits: Parameters<typeof audit>[0][] = [{
+      actor,
+      module: 'QUOTATIONS',
+      action: 'UPDATE',
+      entityId: q.id,
+      entityLabel: q.quotationNumber,
+      summary: `Updated quotation ${q.quotationNumber} (${changes.changed.length} fields)`,
+      details: changes as unknown as Prisma.InputJsonValue,
+      relatedUserId: q.marketingPersonId,
+    }];
+    if (changes.changed.some((c) => c.field === 'status')) {
+      audits.push({
+        actor,
+        module: 'QUOTATIONS',
+        action: 'STATUS_CHANGE',
+        entityId: q.id,
+        entityLabel: q.quotationNumber,
+        summary: `Quotation status changed: ${existing.status} → ${q.status}`,
+        details: { old: { status: existing.status }, new: { status: q.status } } as unknown as Prisma.InputJsonValue,
+        relatedUserId: q.marketingPersonId,
+      });
+      // If status was set to APPROVED or REJECTED directly via update, note in audit trail
+      if (q.status === QuotationStatus.APPROVED) {
+        audits.push({
+          actor,
+          module: 'QUOTATIONS',
+          action: 'APPROVE',
+          entityId: q.id,
+          entityLabel: q.quotationNumber,
+          summary: `Quotation ${q.quotationNumber} approved via status update`,
+          details: { old: { status: existing.status }, new: { status: q.status } } as unknown as Prisma.InputJsonValue,
+          relatedUserId: q.marketingPersonId,
+        });
+      }
+      if (q.status === QuotationStatus.REJECTED) {
+        audits.push({
+          actor,
+          module: 'QUOTATIONS',
+          action: 'REJECT',
+          entityId: q.id,
+          entityLabel: q.quotationNumber,
+          summary: `Quotation ${q.quotationNumber} rejected via status update`,
+          details: { old: { status: existing.status }, new: { status: q.status } } as unknown as Prisma.InputJsonValue,
+          relatedUserId: q.marketingPersonId,
+        });
+      }
+    }
+    if (changes.changed.some((c) => c.field === 'discountTotal')) {
+      audits.push({
+        actor,
+        module: 'QUOTATIONS',
+        action: 'DISCOUNT_CHANGE',
+        entityId: q.id,
+        entityLabel: q.quotationNumber,
+        summary: `Quotation discount changed from ${existing.discountTotal} → ${q.discountTotal}`,
+        details: {
+          old: { discountTotal: existing.discountTotal, grandTotal: existing.grandTotal },
+          new: { discountTotal: q.discountTotal,        grandTotal: q.grandTotal },
+        } as unknown as Prisma.InputJsonValue,
+        relatedUserId: q.marketingPersonId,
+      });
+    }
+    if (changes.changed.some((c) => c.field === 'marketingPersonId')) {
+      audits.push({
+        actor,
+        module: 'QUOTATIONS',
+        action: existing.marketingPersonId ? 'REASSIGN' : 'ASSIGN',
+        entityId: q.id,
+        entityLabel: q.quotationNumber,
+        summary: `Quotation re-assigned to marketing person ${q.marketingPersonId}`,
+        details: {
+          old: { marketingPersonId: existing.marketingPersonId },
+          new: { marketingPersonId: q.marketingPersonId },
+        } as unknown as Prisma.InputJsonValue,
+        relatedUserId: q.marketingPersonId,
+      });
+    }
+    await Promise.all(audits.map((a) => audit(a)));
+  });
+  return updated;
 }
 
 /* ─── Add line item to existing quotation ────────────────────────────────── */
@@ -581,12 +703,30 @@ export async function submitApproval(
     created.push({ quotationItemId: item.id, requestedPrice: unitPrice, minimumPrice });
   }
 
-  return {
+  const result = {
     quotationId,
     submitted: created.length,
     created,
     skipped,
   };
+
+  if (created.length > 0) {
+    void audit({
+      actor,
+      module: 'QUOTATIONS',
+      action: 'PRICE_APPROVAL_SUBMIT',
+      entityId: quotationId,
+      entityLabel: quotation.quotationNumber,
+      summary: `Submitted ${created.length} price approval requests for quotation ${quotation.quotationNumber}`,
+      details: {
+        submittedItems: created,
+        skippedItems: skipped,
+      } as unknown as Prisma.InputJsonValue,
+      relatedUserId: quotation.marketingPersonId,
+    });
+  }
+
+  return result;
 }
 
 /* ─── Approve: set all PENDING approvals to APPROVED + quotation status to APPROVED */
@@ -645,6 +785,31 @@ export async function approveQuotation(
     };
   });
 
+  void audit({
+    actor,
+    module: 'QUOTATIONS',
+    action: 'QUOTATION_APPROVAL',
+    entityId: quotationId,
+    entityLabel: quotation.quotationNumber,
+    summary: `Quotation ${quotation.quotationNumber} approved — ${result.approved} price approval(s) confirmed`,
+    details: {
+      old: { status: quotation.status, approvedPriceItems: 0 },
+      new: { status: QuotationStatus.APPROVED, approvedPriceItems: result.approved },
+    } as unknown as Prisma.InputJsonValue,
+    relatedUserId: quotation.marketingPersonId,
+  });
+
+  void audit({
+    actor,
+    module: 'QUOTATIONS',
+    action: 'STATUS_CHANGE',
+    entityId: quotationId,
+    entityLabel: quotation.quotationNumber,
+    summary: `Quotation status: ${quotation.status} → APPROVED`,
+    details: { old: { status: quotation.status }, new: { status: QuotationStatus.APPROVED } } as unknown as Prisma.InputJsonValue,
+    relatedUserId: quotation.marketingPersonId,
+  });
+
   return result;
 }
 
@@ -699,6 +864,33 @@ export async function rejectQuotation(
       remarks: input.remarks,
       quotation: updated,
     };
+  });
+
+  void audit({
+    actor,
+    module: 'QUOTATIONS',
+    action: 'QUOTATION_REJECTION',
+    entityId: quotationId,
+    entityLabel: quotation.quotationNumber,
+    summary: `Quotation ${quotation.quotationNumber} rejected — remarks: ${input.remarks}`,
+    details: {
+      old: { status: quotation.status },
+      new: { status: QuotationStatus.REJECTED },
+      remarks: input.remarks,
+      rejectedPriceItems: result.rejected,
+    } as unknown as Prisma.InputJsonValue,
+    relatedUserId: quotation.marketingPersonId,
+  });
+
+  void audit({
+    actor,
+    module: 'QUOTATIONS',
+    action: 'STATUS_CHANGE',
+    entityId: quotationId,
+    entityLabel: quotation.quotationNumber,
+    summary: `Quotation status: ${quotation.status} → REJECTED`,
+    details: { old: { status: quotation.status }, new: { status: QuotationStatus.REJECTED } } as unknown as Prisma.InputJsonValue,
+    relatedUserId: quotation.marketingPersonId,
   });
 
   return result;
@@ -889,5 +1081,37 @@ export async function convertQuotationToOrder(
     return orderWithInvoice;
   });
 
+  void audit({
+    actor,
+    module: 'QUOTATIONS',
+    action: 'CONVERT',
+    entityId: quotation.id,
+    entityLabel: quotation.quotationNumber,
+    summary: `Quotation ${quotation.quotationNumber} converted to Sales Order ${result?.orderNumber}`,
+    details: {
+      salesOrderId: result?.id,
+      orderNumber: result?.orderNumber,
+      grandTotal: quotation.grandTotal,
+      itemsCount: quotation.items.length,
+    } as unknown as Prisma.InputJsonValue,
+    relatedUserId: quotation.marketingPersonId,
+  });
+
+  void audit({
+    actor,
+    module: 'SALES_ORDERS',
+    action: 'ORDER_CREATE',
+    entityId: result?.id ?? '',
+    entityLabel: result?.orderNumber,
+    summary: `Sales order ${result?.orderNumber} created via quotation conversion`,
+    details: {
+      quotationId: quotation.id,
+      quotationNumber: quotation.quotationNumber,
+      grandTotal: quotation.grandTotal,
+    } as unknown as Prisma.InputJsonValue,
+    relatedUserId: quotation.marketingPersonId,
+  });
+
   return result;
 }
+

@@ -3,6 +3,7 @@ import { CustomerType, UserStatus, Role, type Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { ownerFilter } from '../../lib/rbac';
 import { applyListQuery, buildMeta } from '../../lib/list-query';
+import { audit, buildFieldChanges } from '../../lib/audit';
 
 /* ─── Zod schemas ─────────────────────────────────────────────────────────── */
 export const createCustomerSchema = z.object({
@@ -26,6 +27,7 @@ export interface Actor {
   id: string;
   role: Role;
   managerId?: string | null;
+  ip?: string | null;
 }
 
 /* ─── Select shape ────────────────────────────────────────────────────────── */
@@ -145,6 +147,18 @@ export async function createCustomer(raw: unknown, actor: Actor) {
       status:            input.status,
     },
     select: CUSTOMER_SELECT,
+  }).then((c) => {
+    void audit({
+      actor,
+      module: 'CUSTOMERS',
+      action: 'CREATE',
+      entityId: c.id,
+      entityLabel: c.companyName ?? c.contactPerson,
+      summary: `Created customer "${c.companyName ?? c.contactPerson}"`,
+      details: { customerType: c.customerType, managerId: c.managerId } as unknown as Prisma.InputJsonValue,
+      relatedUserId: c.marketingPersonId,
+    });
+    return c;
   });
 }
 
@@ -214,5 +228,40 @@ export async function updateCustomer(
   if (input.managerId         !== undefined) data.managerId         = input.managerId ?? existing.managerId;
   if (input.marketingPersonId !== undefined && input.marketingPersonId !== null) data.marketingPersonId = input.marketingPersonId;
 
-  return prisma.customer.update({ where: { id }, data, select: CUSTOMER_SELECT });
+  const updated = prisma.customer.update({ where: { id }, data, select: CUSTOMER_SELECT });
+
+  void updated.then(async (c) => {
+    const changes = buildFieldChanges(
+      existing as unknown as Record<string, unknown>,
+      data as unknown as Record<string, unknown>
+    );
+    const audits: Parameters<typeof audit>[0][] = [{
+      actor,
+      module: 'CUSTOMERS',
+      action: 'UPDATE',
+      entityId: c.id,
+      entityLabel: c.companyName ?? c.contactPerson,
+      summary: `Updated customer "${c.companyName ?? c.contactPerson}" (${changes.changed.length} fields)`,
+      details: changes as unknown as Prisma.InputJsonValue,
+      relatedUserId: c.marketingPersonId,
+    }];
+    if (changes.changed.some((f) => f.field === 'marketingPersonId')) {
+      audits.push({
+        actor,
+        module: 'CUSTOMERS',
+        action: existing.marketingPersonId ? 'REASSIGN' : 'ASSIGN',
+        entityId: c.id,
+        entityLabel: c.companyName ?? c.contactPerson,
+        summary: `Customer re-assigned to marketing person ${c.marketingPersonId}`,
+        details: {
+          old: { marketingPersonId: existing.marketingPersonId },
+          new: { marketingPersonId: c.marketingPersonId },
+        } as unknown as Prisma.InputJsonValue,
+        relatedUserId: c.marketingPersonId,
+      });
+    }
+    await Promise.all(audits.map((a) => audit(a)));
+  });
+  return updated;
 }
+

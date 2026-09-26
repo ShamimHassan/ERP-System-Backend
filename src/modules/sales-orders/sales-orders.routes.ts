@@ -23,7 +23,7 @@ function handleError(res: Response, err: unknown): void {
 }
 
 const actorOf = (req: Request) => ({
-  id: req.user!.id, role: req.user!.role as Role, managerId: req.user!.managerId,
+  id: req.user!.id, role: req.user!.role as Role, managerId: req.user!.managerId, ip: req.ip ?? null,
 });
 
 // GET /api/sales-orders

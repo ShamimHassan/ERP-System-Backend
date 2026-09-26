@@ -31,7 +31,7 @@ router.get('/', authenticate, scopeData(), async (req: Request, res: Response) =
 router.post('/', authenticate, scopeData(), async (req: Request, res: Response) => {
   try {
     const result = await createActivity(req.body, {
-      id: req.user!.id, role: req.user!.role as Role, managerId: req.user!.managerId,
+      id: req.user!.id, role: req.user!.role as Role, managerId: req.user!.managerId, ip: req.ip ?? null,
     });
     return ok(res, result);
   } catch (err) { return handleError(res, err); }
@@ -46,3 +46,4 @@ router.get('/:id', authenticate, scopeData(), async (req: Request, res: Response
 });
 
 export default router;
+

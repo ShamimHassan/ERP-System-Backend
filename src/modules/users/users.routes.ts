@@ -79,6 +79,7 @@ router.post(
       const result = await createUser(req.body, {
         id: req.user!.id,
         role: req.user!.role as Role,
+        ip: req.ip ?? null,
       });
       return ok(res, result);
     } catch (err) {
@@ -113,7 +114,7 @@ router.patch(
       const result = await updateUser(
         String(req.params.id),
         req.body,
-        { id: req.user!.id, role: req.user!.role as Role },
+        { id: req.user!.id, role: req.user!.role as Role, ip: req.ip ?? null },
         req.visibleUserIds ?? null
       );
       return ok(res, result);
@@ -132,7 +133,7 @@ router.delete(
     try {
       const result = await deleteUser(
         String(req.params.id),
-        { id: req.user!.id, role: req.user!.role as Role },
+        { id: req.user!.id, role: req.user!.role as Role, ip: req.ip ?? null },
         req.visibleUserIds ?? null
       );
       return ok(res, result);
@@ -143,3 +144,4 @@ router.delete(
 );
 
 export default router;
+

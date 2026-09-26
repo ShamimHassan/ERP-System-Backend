@@ -6,6 +6,7 @@ import {
 import { prisma } from '../../lib/prisma';
 import { ownerFilter } from '../../lib/rbac';
 import { applyListQuery, buildMeta } from '../../lib/list-query';
+import { audit, buildFieldChanges } from '../../lib/audit';
 
 /* ─── Zod schemas ─────────────────────────────────────────────────────────── */
 export const createSurveySchema = z.object({
@@ -34,6 +35,7 @@ export interface Actor {
   id: string;
   role: Role;
   managerId?: string | null;
+  ip?: string | null;
 }
 
 /* ─── Select shape ────────────────────────────────────────────────────────── */
@@ -203,6 +205,22 @@ export async function createSurvey(raw: unknown, actor: Actor) {
       status:               input.status,
     },
     select: SURVEY_SELECT,
+  }).then((s) => {
+    void audit({
+      actor,
+      module: 'SURVEYS',
+      action: 'CREATE',
+      entityId: s.id,
+      entityLabel: s.location,
+      summary: `Created survey @ "${s.location}" (status=${s.status})`,
+      details: {
+        opportunityId: s.opportunityId,
+        status: s.status,
+        surveyDate: s.surveyDate,
+      } as unknown as Prisma.InputJsonValue,
+      relatedUserId: s.assignedPersonId,
+    });
+    return s;
   });
 }
 
@@ -264,5 +282,52 @@ export async function updateSurvey(
   if (input.attachments          !== undefined) data.attachments          = (input.attachments as Prisma.InputJsonValue) ?? null;
   if (input.status               !== undefined) data.status               = input.status;
 
-  return prisma.survey.update({ where: { id }, data, select: SURVEY_SELECT });
+  const updated = prisma.survey.update({ where: { id }, data, select: SURVEY_SELECT });
+
+  void updated.then(async (s) => {
+    const changes = buildFieldChanges(
+      existing as unknown as Record<string, unknown>,
+      data as unknown as Record<string, unknown>
+    );
+    const audits: Parameters<typeof audit>[0][] = [{
+      actor,
+      module: 'SURVEYS',
+      action: 'UPDATE',
+      entityId: s.id,
+      entityLabel: s.location,
+      summary: `Updated survey @ "${s.location}" (${changes.changed.length} fields)`,
+      details: changes as unknown as Prisma.InputJsonValue,
+      relatedUserId: s.assignedPersonId,
+    }];
+    if (changes.changed.some((c) => c.field === 'status')) {
+      audits.push({
+        actor,
+        module: 'SURVEYS',
+        action: 'STATUS_CHANGE',
+        entityId: s.id,
+        entityLabel: s.location,
+        summary: `Survey status changed: ${existing.status} → ${s.status}`,
+        details: { old: { status: existing.status }, new: { status: s.status } } as unknown as Prisma.InputJsonValue,
+        relatedUserId: s.assignedPersonId,
+      });
+    }
+    if (changes.changed.some((c) => c.field === 'assignedPersonId')) {
+      audits.push({
+        actor,
+        module: 'SURVEYS',
+        action: existing.assignedPersonId ? 'REASSIGN' : 'ASSIGN',
+        entityId: s.id,
+        entityLabel: s.location,
+        summary: `Survey re-assigned to person ${s.assignedPersonId}`,
+        details: {
+          old: { assignedPersonId: existing.assignedPersonId },
+          new: { assignedPersonId: s.assignedPersonId },
+        } as unknown as Prisma.InputJsonValue,
+        relatedUserId: s.assignedPersonId,
+      });
+    }
+    await Promise.all(audits.map((a) => audit(a)));
+  });
+  return updated;
 }
+

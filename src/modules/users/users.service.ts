@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { env } from '../../config/env';
 import { prisma } from '../../lib/prisma';
 import { Role, UserStatus, type User, type Prisma } from '@prisma/client';
+import { audit, buildFieldChanges } from '../../lib/audit';
 
 const ROLE_VALUES: [string, ...string[]] = Object.values(Role) as [
   string,
@@ -174,6 +175,7 @@ export async function getUser(
 export interface ActorContext {
   id: string;
   role: Role;
+  ip?: string | null;
 }
 
 export async function createUser(
@@ -221,6 +223,15 @@ export async function createUser(
       managerId: input.managerId ?? null,
     },
     select: USER_SELECT,
+  });
+  await audit({
+    actor,
+    module: 'USERS',
+    action: 'CREATE',
+    entityId: created.id,
+    entityLabel: created.name,
+    summary: `Created user ${created.name} (${created.email}) role=${created.role}`,
+    details: { role: created.role, managerId: created.managerId, status: created.status } as unknown as Prisma.InputJsonValue,
   });
   return mapResult(created);
 }
@@ -333,6 +344,38 @@ export async function updateUser(
     data,
     select: USER_SELECT,
   });
+
+  const changes = buildFieldChanges(
+    existing as unknown as Record<string, unknown>,
+    data as unknown as Record<string, unknown>
+  );
+  const audits: Parameters<typeof audit>[0][] = [{
+    actor,
+    module: 'USERS',
+    action: 'UPDATE',
+    entityId: updated.id,
+    entityLabel: updated.name,
+    summary: `Updated user ${updated.name} (${changes.changed.length} fields)`,
+    details: changes as unknown as Prisma.InputJsonValue,
+  }];
+  if (changes.changed.some((c) => c.field === 'managerId')) {
+    const oldMgr = (existing as unknown as { managerId: string | null }).managerId;
+    audits.push({
+      actor,
+      module: 'USERS',
+      action: oldMgr ? 'REASSIGN' : 'ASSIGN',
+      entityId: updated.id,
+      entityLabel: updated.name,
+      summary: oldMgr
+        ? `Reassigned ${updated.name} from manager ${oldMgr} to ${updated.managerId}`
+        : `Assigned ${updated.name} to manager ${updated.managerId}`,
+      details: {
+        old: { managerId: oldMgr },
+        new: { managerId: updated.managerId },
+      } as unknown as Prisma.InputJsonValue,
+    });
+  }
+  await Promise.all(audits.map((a) => audit(a)));
   return mapResult(updated);
 }
 
@@ -367,6 +410,15 @@ export async function deleteUser(
   await prisma.user.update({
     where: { id },
     data: { deletedAt: new Date(), status: UserStatus.INACTIVE },
+  });
+  await audit({
+    actor,
+    module: 'USERS',
+    action: 'DELETE',
+    entityId: existing.id,
+    entityLabel: (existing as unknown as { name: string }).name,
+    summary: `Deleted user ${(existing as unknown as { name: string }).name} (${(existing as unknown as { email: string }).email})`,
+    details: { reason: 'soft-delete', statusBefore: existing.status } as unknown as Prisma.InputJsonValue,
   });
   return { id, deleted: true };
 }

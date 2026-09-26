@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { BillingType, UserStatus, type Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { applyListQuery, buildMeta } from '../../lib/list-query';
+import { audit } from '../../lib/audit';
 
 /* ─── Zod schemas ─────────────────────────────────────────────────────────── */
 export const createPriceSchema = z.object({
@@ -114,7 +115,8 @@ export async function getCurrentPrice(productId: string) {
 export async function addPrice(
   productId: string,
   raw: unknown,
-  actorId: string
+  actorId: string,
+  ipAddress?: string | null
 ) {
   await assertProduct(productId);
   const input = createPriceSchema.parse(raw);
@@ -159,6 +161,37 @@ export async function addPrice(
     return created;
   });
 
+  await audit({
+    actor: { id: actorId, role: 'ADMIN' as const },
+    module: 'PRICES',
+    action: 'PRICE_CHANGE',
+    entityId: newPrice.id,
+    entityLabel: `Price for product #${productId}`,
+    summary: oldPrice
+      ? `Price changed from ${oldPrice.sellingPrice} → ${newPrice.sellingPrice} (productId=${productId})`
+      : `Initial price set: sellingPrice=${newPrice.sellingPrice} (productId=${productId})`,
+    details: {
+      old: oldPrice ? {
+        priceId:      oldPrice.id,
+        sellingPrice: oldPrice.sellingPrice,
+        regularPrice: oldPrice.regularPrice,
+        minimumPrice: oldPrice.minimumPrice,
+        billingType:  oldPrice.billingType,
+        effectiveDate: oldPrice.effectiveDate,
+      } : null,
+      new: {
+        priceId:      newPrice.id,
+        sellingPrice: newPrice.sellingPrice,
+        regularPrice: newPrice.regularPrice,
+        minimumPrice: newPrice.minimumPrice,
+        billingType:  newPrice.billingType,
+        effectiveDate: newPrice.effectiveDate,
+      },
+      productId,
+    } as unknown as Prisma.InputJsonValue,
+    ipAddress,
+  });
+
   return newPrice;
 }
 
@@ -167,7 +200,8 @@ export async function updatePrice(
   productId: string,
   priceId: string,
   raw: unknown,
-  actorId: string
+  actorId: string,
+  ipAddress?: string | null
 ) {
   await assertProduct(productId);
 
@@ -213,6 +247,36 @@ export async function updatePrice(
     });
 
     return created;
+  });
+
+  await audit({
+    actor: { id: actorId, role: 'ADMIN' as const },
+    module: 'PRICES',
+    action: 'PRICE_CHANGE',
+    entityId: newPrice.id,
+    entityLabel: `Price for product #${productId} (update)`,
+    summary: `Price update: sellingPrice ${existingPrice.sellingPrice} → ${newPrice.sellingPrice} (productId=${productId})`,
+    details: {
+      old: {
+        priceId:      existingPrice.id,
+        sellingPrice: existingPrice.sellingPrice,
+        regularPrice: existingPrice.regularPrice,
+        minimumPrice: existingPrice.minimumPrice,
+        billingType:  existingPrice.billingType,
+        effectiveDate: existingPrice.effectiveDate,
+      },
+      new: {
+        priceId:      newPrice.id,
+        sellingPrice: newPrice.sellingPrice,
+        regularPrice: newPrice.regularPrice,
+        minimumPrice: newPrice.minimumPrice,
+        billingType:  newPrice.billingType,
+        effectiveDate: newPrice.effectiveDate,
+      },
+      productId,
+      sourcePriceId: priceId,
+    } as unknown as Prisma.InputJsonValue,
+    ipAddress,
   });
 
   return newPrice;

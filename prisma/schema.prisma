@@ -159,11 +159,30 @@ enum AuditAction {
   PRICE_CHANGE
   DISCOUNT_CHANGE
   PRICE_APPROVAL
+  PRICE_APPROVAL_SUBMIT
   QUOTATION_APPROVAL
   QUOTATION_REJECTION
+  APPROVE
+  REJECT
   ORDER_CREATE
   ORDER_CANCEL
   STATUS_CHANGE
+  CONVERT
+}
+
+enum AuditModule {
+  USERS
+  LEADS
+  CUSTOMERS
+  OPPORTUNITIES
+  ACTIVITIES
+  SURVEYS
+  PRODUCTS
+  PRICES
+  QUOTATIONS
+  SALES_ORDERS
+  KPI_TARGETS
+  SYSTEM
 }
 
 model User {
@@ -199,6 +218,7 @@ model User {
   targets                Target[]
   kpis                   Kpi[]
   auditLogs              AuditLog[]
+  auditLogsRelated       AuditLog[]  @relation("AuditRelatedUser")
 
   @@index([role])
   @@index([managerId])
@@ -562,17 +582,22 @@ model Kpi {
 }
 
 model AuditLog {
-  id         String       @id @default(uuid())
-  userId     String
-  user       User         @relation(fields: [userId], references: [id])
-  action     AuditAction
-  module     String
-  recordId   String
-  oldValue   Json?
-  newValue   Json?
-  ipAddress  String?
-  createdAt  DateTime     @default(now())
+  id           String      @id @default(uuid())
+  actorId      String
+  actor        User        @relation(fields: [actorId], references: [id])
+  actorRole    Role
+  module       AuditModule
+  action       AuditAction
+  entityId     String?
+  entityLabel  String?
+  summary      String?
+  details      Json?
+  relatedUserId String?
+  relatedUser   User?      @relation("AuditRelatedUser", fields: [relatedUserId], references: [id])
+  ipAddress    String?
+  createdAt    DateTime    @default(now())
 
-  @@index([userId, action, createdAt])
-  @@index([module, recordId])
+  @@index([actorId, action, createdAt])
+  @@index([module, entityId])
+  @@index([relatedUserId])
 }

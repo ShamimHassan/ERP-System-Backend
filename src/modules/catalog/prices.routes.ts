@@ -51,7 +51,8 @@ router.post(
       const result = await addPrice(
         String(req.params.productId),
         req.body,
-        req.user!.id
+        req.user!.id,
+        req.ip ?? null
       );
       return ok(res, result);
     } catch (err) {
@@ -72,7 +73,8 @@ router.patch(
         String(req.params.productId),
         String(req.params.priceId),
         req.body,
-        req.user!.id
+        req.user!.id,
+        req.ip ?? null
       );
       return ok(res, result);
     } catch (err) {

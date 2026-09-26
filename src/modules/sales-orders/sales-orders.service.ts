@@ -6,6 +6,7 @@ import {
 import { prisma } from '../../lib/prisma';
 import { ownerFilter } from '../../lib/rbac';
 import { applyListQuery, buildMeta } from '../../lib/list-query';
+import { audit, buildFieldChanges } from '../../lib/audit';
 
 /* ─── Zod schemas ─────────────────────────────────────────────────────────── */
 const salesOrderItemInput = z.object({
@@ -48,6 +49,7 @@ export interface Actor {
   id: string;
   role: Role;
   managerId?: string | null;
+  ip?: string | null;
 }
 
 /* ─── Select shapes ───────────────────────────────────────────────────────── */
@@ -363,6 +365,23 @@ export async function createSalesOrder(raw: unknown, actor: Actor) {
     return header;
   });
 
+  void audit({
+    actor,
+    module: 'SALES_ORDERS',
+    action: 'ORDER_CREATE',
+    entityId: result.id,
+    entityLabel: result.orderNumber,
+    summary: `Created sales order ${result.orderNumber} (grandTotal=${grandTotal})`,
+    details: {
+      customerId: result.customerId,
+      quotationId: result.quotationId,
+      itemsCount: result.items.length,
+      grandTotal,
+      status: result.status,
+    } as unknown as Prisma.InputJsonValue,
+    relatedUserId: result.marketingPersonId,
+  });
+
   return result;
 }
 
@@ -439,7 +458,54 @@ export async function updateSalesOrder(
   if (input.marketingPersonId     !== undefined && input.marketingPersonId !== null) data.marketingPersonId = input.marketingPersonId;
   if (grandTotal                  !== undefined) data.grandTotal            = grandTotal;
 
-  return prisma.salesOrder.update({ where: { id }, data, select: SALES_ORDER_SELECT });
+  const updated = prisma.salesOrder.update({ where: { id }, data, select: SALES_ORDER_SELECT });
+
+  void updated.then(async (so) => {
+    const changes = buildFieldChanges(
+      existing as unknown as Record<string, unknown>,
+      data as unknown as Record<string, unknown>
+    );
+    const audits: Parameters<typeof audit>[0][] = [{
+      actor,
+      module: 'SALES_ORDERS',
+      action: 'UPDATE',
+      entityId: so.id,
+      entityLabel: so.orderNumber,
+      summary: `Updated sales order ${so.orderNumber} (${changes.changed.length} fields)`,
+      details: changes as unknown as Prisma.InputJsonValue,
+      relatedUserId: so.marketingPersonId,
+    }];
+    if (changes.changed.some((c) => c.field === 'status')) {
+      audits.push({
+        actor,
+        module: 'SALES_ORDERS',
+        action: 'STATUS_CHANGE',
+        entityId: so.id,
+        entityLabel: so.orderNumber,
+        summary: `Sales order status: ${existing.status} → ${so.status}`,
+        details: { old: { status: existing.status }, new: { status: so.status } } as unknown as Prisma.InputJsonValue,
+        relatedUserId: so.marketingPersonId,
+      });
+    }
+    if (changes.changed.some((c) => c.field === 'marketingPersonId')) {
+      audits.push({
+        actor,
+        module: 'SALES_ORDERS',
+        action: existing.marketingPersonId ? 'REASSIGN' : 'ASSIGN',
+        entityId: so.id,
+        entityLabel: so.orderNumber,
+        summary: `Sales order re-assigned to ${so.marketingPersonId}`,
+        details: {
+          old: { marketingPersonId: existing.marketingPersonId },
+          new: { marketingPersonId: so.marketingPersonId },
+        } as unknown as Prisma.InputJsonValue,
+        relatedUserId: so.marketingPersonId,
+      });
+    }
+    await Promise.all(audits.map((a) => audit(a)));
+  });
+
+  return updated;
 }
 
 /* ─── Add line item ───────────────────────────────────────────────────────── */
@@ -550,9 +616,37 @@ export async function cancelSalesOrder(
 
   void actor;
 
-  return prisma.salesOrder.update({
+  const cancelled = await prisma.salesOrder.update({
     where: { id },
     data: { status: SalesOrderStatus.CANCELLED },
     select: SALES_ORDER_SELECT,
   });
+
+  void audit({
+    actor,
+    module: 'SALES_ORDERS',
+    action: 'ORDER_CANCEL',
+    entityId: cancelled.id,
+    entityLabel: cancelled.orderNumber,
+    summary: `Cancelled sales order ${cancelled.orderNumber} (was ${existing.status})`,
+    details: {
+      old: { status: existing.status },
+      new: { status: SalesOrderStatus.CANCELLED },
+    } as unknown as Prisma.InputJsonValue,
+    relatedUserId: cancelled.marketingPersonId,
+  });
+
+  void audit({
+    actor,
+    module: 'SALES_ORDERS',
+    action: 'STATUS_CHANGE',
+    entityId: cancelled.id,
+    entityLabel: cancelled.orderNumber,
+    summary: `Sales order status: ${existing.status} → CANCELLED`,
+    details: { old: { status: existing.status }, new: { status: SalesOrderStatus.CANCELLED } } as unknown as Prisma.InputJsonValue,
+    relatedUserId: cancelled.marketingPersonId,
+  });
+
+  return cancelled;
 }
+

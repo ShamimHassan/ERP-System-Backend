@@ -15,6 +15,7 @@ export interface Actor {
   id: string;
   role: Role;
   managerId?: string | null;
+  ip?: string | null;
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
@@ -406,3 +407,4 @@ export async function setTarget(
 
 /* ─── Ownership filter scoping helpers (re-used for visibleUserIds in reports) ─── */
 export { ownerFilter };
+

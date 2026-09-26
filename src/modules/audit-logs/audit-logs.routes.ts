@@ -1,12 +1,12 @@
 import { Router, type Request, type Response } from 'express';
-import { authenticate, scopeData } from '../../middleware/auth';
+import { authenticate, authorize, scopeData } from '../../middleware/auth';
 import { ok, fail } from '../../lib/response';
 import type { Role } from '@prisma/client';
-import { getSalesReport, getMarketingReport, type Actor } from './reports.service';
+import { listAuditLogs, type AuditScope } from './audit-logs.service';
 
 const router = Router({ mergeParams: true });
 
-function actorOf(req: Request): Actor {
+function actorOf(req: Request): AuditScope['actor'] {
   const r = req as unknown as { user?: { id: string; role: Role; managerId?: string | null } };
   if (!r.user) throw Object.assign(new Error('Unauthenticated'), { code: 'UNAUTHORIZED', status: 401 });
   return { id: r.user.id, role: r.user.role, managerId: r.user.managerId, ip: req.ip ?? null };
@@ -27,20 +27,22 @@ function handleError(res: Response, err: unknown): void {
   fail(res, 500, { code: 'INTERNAL_SERVER_ERROR', message: (e as Error).message || 'Internal server error' });
 }
 
-/* ─── GET /api/reports/sales ───────────────────────────────────────────── */
-router.get('/sales', authenticate, scopeData(), async (req: Request, res: Response) => {
-  try {
-    const result = await getSalesReport(actorOf(req), req.visibleUserIds ?? null, req.query as Record<string, unknown>);
-    return ok(res, result);
-  } catch (err) { return handleError(res, err); }
-});
-
-/* ─── GET /api/reports/marketing ───────────────────────────────────────── */
-router.get('/marketing', authenticate, scopeData(), async (req: Request, res: Response) => {
-  try {
-    const result = await getMarketingReport(actorOf(req), req.visibleUserIds ?? null, req.query as Record<string, unknown>);
-    return ok(res, result);
-  } catch (err) { return handleError(res, err); }
-});
+/* ─── GET /api/audit-logs — Admin = full; Manager = team; Marketing = 403 */
+router.get(
+  '/',
+  authenticate,
+  authorize(['ADMIN', 'MANAGER']),
+  scopeData(),
+  async (req: Request, res: Response) => {
+    try {
+      const result = await listAuditLogs(
+        { actor: actorOf(req), visibleUserIds: req.visibleUserIds ?? null },
+        req.query as unknown as Parameters<typeof listAuditLogs>[1]
+      );
+      return ok(res, result.data, result.meta);
+    } catch (err) { return handleError(res, err); }
+  }
+);
 
 export default router;
+

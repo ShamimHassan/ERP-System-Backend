@@ -6,6 +6,7 @@ import {
 import { prisma } from '../../lib/prisma';
 import { ownerFilter } from '../../lib/rbac';
 import { applyListQuery, buildMeta } from '../../lib/list-query';
+import { audit, buildFieldChanges } from '../../lib/audit';
 
 /* ─── Zod schemas ─────────────────────────────────────────────────────────── */
 export const createLeadSchema = z.object({
@@ -34,6 +35,7 @@ export interface Actor {
   id: string;
   role: Role;
   managerId?: string | null;
+  ip?: string | null;
 }
 
 /* ─── Select shape ────────────────────────────────────────────────────────── */
@@ -247,6 +249,24 @@ export async function createLead(raw: unknown, actor: Actor) {
       notes:             input.notes?.trim() ?? null,
     },
     select: LEAD_SELECT,
+  }).then((created) => {
+    audit({
+      actor,
+      module: 'LEADS',
+      action: 'CREATE',
+      entityId: created.id,
+      entityLabel: created.leadName,
+      summary: `Created lead "${created.leadName}" for ${created.companyName}`,
+      details: {
+        companyName: created.companyName,
+        leadSource: created.leadSource,
+        status: created.status,
+        priority: created.priority,
+        managerId: created.managerId,
+      } as unknown as Prisma.InputJsonValue,
+      relatedUserId: created.marketingPersonId,
+    }).catch(() => {});
+    return created;
   });
 }
 
@@ -343,7 +363,54 @@ export async function updateLead(
   if (input.managerId        !== undefined) data.managerId        = input.managerId ?? existing.managerId;
   if (input.marketingPersonId !== undefined && input.marketingPersonId !== null) data.marketingPersonId = input.marketingPersonId;
 
-  return prisma.lead.update({ where: { id }, data, select: LEAD_SELECT });
+  const updated = prisma.lead.update({ where: { id }, data, select: LEAD_SELECT });
+
+  // Fire audits in parallel with return to avoid latency penalty
+  void updated.then(async (u) => {
+    const changes = buildFieldChanges(
+      existing as unknown as Record<string, unknown>,
+      data as unknown as Record<string, unknown>
+    );
+    const audits: Parameters<typeof audit>[0][] = [{
+      actor,
+      module: 'LEADS',
+      action: 'UPDATE',
+      entityId: u.id,
+      entityLabel: u.leadName,
+      summary: `Updated lead "${u.leadName}" (${changes.changed.length} fields)`,
+      details: changes as unknown as Prisma.InputJsonValue,
+      relatedUserId: u.marketingPersonId,
+    }];
+    if (changes.changed.some((c) => c.field === 'status')) {
+      audits.push({
+        actor,
+        module: 'LEADS',
+        action: 'STATUS_CHANGE',
+        entityId: u.id,
+        entityLabel: u.leadName,
+        summary: `Lead status changed: ${existing.status} → ${u.status}`,
+        details: { old: { status: existing.status }, new: { status: u.status } } as unknown as Prisma.InputJsonValue,
+        relatedUserId: u.marketingPersonId,
+      });
+    }
+    if (changes.changed.some((c) => c.field === 'marketingPersonId')) {
+      audits.push({
+        actor,
+        module: 'LEADS',
+        action: existing.marketingPersonId ? 'REASSIGN' : 'ASSIGN',
+        entityId: u.id,
+        entityLabel: u.leadName,
+        summary: `Lead re-assigned to marketing person ${u.marketingPersonId}`,
+        details: {
+          old: { marketingPersonId: existing.marketingPersonId },
+          new: { marketingPersonId: u.marketingPersonId },
+        } as unknown as Prisma.InputJsonValue,
+        relatedUserId: u.marketingPersonId,
+      });
+    }
+    await Promise.all(audits.map((a) => audit(a)));
+  });
+  return updated;
 }
 
 /* ─── Soft delete ─────────────────────────────────────────────────────────── */
@@ -361,6 +428,16 @@ export async function deleteLead(
   if (!existing) notFound();
 
   await prisma.lead.update({ where: { id }, data: { deletedAt: new Date() } });
+  await audit({
+    actor,
+    module: 'LEADS',
+    action: 'DELETE',
+    entityId: existing.id,
+    entityLabel: (existing as unknown as { leadName: string }).leadName,
+    summary: `Deleted lead "${(existing as unknown as { leadName: string }).leadName}"`,
+    details: { reason: 'soft-delete', statusBefore: existing.status } as unknown as Prisma.InputJsonValue,
+    relatedUserId: existing.marketingPersonId ?? null,
+  });
   return { id, deleted: true };
 }
 
@@ -418,5 +495,31 @@ export async function convertLead(
     return { customerId: cust.id, leadId: id, leadStatus: finalLeadStatus };
   });
 
+  await audit({
+    actor,
+    module: 'LEADS',
+    action: 'CONVERT',
+    entityId: lead.id,
+    entityLabel: lead.leadName,
+    summary: `Converted lead "${lead.leadName}" → customer #${result.customerId}`,
+    details: {
+      customerId: result.customerId,
+      leadStatusBefore: lead.status,
+      leadStatusAfter: result.leadStatus,
+    } as unknown as Prisma.InputJsonValue,
+    relatedUserId: lead.marketingPersonId,
+  });
+  await audit({
+    actor,
+    module: 'CUSTOMERS',
+    action: 'CREATE',
+    entityId: result.customerId,
+    entityLabel: lead.companyName ?? lead.leadName,
+    summary: `Created customer via lead conversion: "${lead.companyName ?? lead.leadName}"`,
+    details: { source: 'lead-conversion', leadId: lead.id } as unknown as Prisma.InputJsonValue,
+    relatedUserId: lead.marketingPersonId,
+  });
+
   return result;
 }
+

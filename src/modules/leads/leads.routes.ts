@@ -32,7 +32,7 @@ router.get('/', authenticate, scopeData(), async (req: Request, res: Response) =
 // POST /api/leads
 router.post('/', authenticate, scopeData(), async (req: Request, res: Response) => {
   try {
-    const result = await createLead(req.body, { id: req.user!.id, role: req.user!.role as Role, managerId: req.user!.managerId });
+    const result = await createLead(req.body, { id: req.user!.id, role: req.user!.role as Role, managerId: req.user!.managerId, ip: req.ip ?? null });
     return ok(res, result);
   } catch (err) { return handleError(res, err); }
 });
@@ -50,7 +50,7 @@ router.patch('/:id', authenticate, scopeData(), async (req: Request, res: Respon
   try {
     const result = await updateLead(
       String(req.params.id), req.body,
-      { id: req.user!.id, role: req.user!.role as Role, managerId: req.user!.managerId },
+      { id: req.user!.id, role: req.user!.role as Role, managerId: req.user!.managerId, ip: req.ip ?? null },
       req.visibleUserIds ?? null
     );
     return ok(res, result);
@@ -62,7 +62,7 @@ router.delete('/:id', authenticate, authorize(['ADMIN', 'MANAGER']), scopeData()
   try {
     const result = await deleteLead(
       String(req.params.id),
-      { id: req.user!.id, role: req.user!.role as Role, managerId: req.user!.managerId },
+      { id: req.user!.id, role: req.user!.role as Role, managerId: req.user!.managerId, ip: req.ip ?? null },
       req.visibleUserIds ?? null
     );
     return ok(res, result);
@@ -74,7 +74,7 @@ router.post('/:id/convert', authenticate, scopeData(), async (req: Request, res:
   try {
     const result = await convertLead(
       String(req.params.id),
-      { id: req.user!.id, role: req.user!.role as Role, managerId: req.user!.managerId },
+      { id: req.user!.id, role: req.user!.role as Role, managerId: req.user!.managerId, ip: req.ip ?? null },
       req.visibleUserIds ?? null
     );
     return ok(res, result);
@@ -82,3 +82,4 @@ router.post('/:id/convert', authenticate, scopeData(), async (req: Request, res:
 });
 
 export default router;
+

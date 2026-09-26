@@ -10,7 +10,7 @@ const router = Router({ mergeParams: true });
 function actorOf(req: Request): Actor {
   const r = req as unknown as { user?: { id: string; role: Role; managerId?: string | null } };
   if (!r.user) throw Object.assign(new Error('Unauthenticated'), { code: 'UNAUTHORIZED', status: 401 });
-  return { id: r.user.id, role: r.user.role, managerId: r.user.managerId };
+  return { id: r.user.id, role: r.user.role, managerId: r.user.managerId, ip: req.ip ?? null };
 }
 
 function handleError(res: Response, err: unknown): Response {

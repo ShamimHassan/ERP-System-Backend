@@ -28,6 +28,7 @@ export interface Actor {
   id: string;
   role: Role;
   managerId?: string | null;
+  ip?: string | null;
 }
 
 /* ─── Select shape ────────────────────────────────────────────────────────── */
@@ -161,3 +162,4 @@ export async function createActivity(raw: unknown, actor: Actor) {
     select: ACTIVITY_SELECT,
   });
 }
+

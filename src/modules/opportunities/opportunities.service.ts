@@ -6,6 +6,7 @@ import {
 import { prisma } from '../../lib/prisma';
 import { ownerFilter } from '../../lib/rbac';
 import { applyListQuery, buildMeta } from '../../lib/list-query';
+import { audit, buildFieldChanges } from '../../lib/audit';
 
 /* ─── Zod schemas ─────────────────────────────────────────────────────────── */
 export const createOpportunitySchema = z.object({
@@ -30,6 +31,7 @@ export interface Actor {
   id: string;
   role: Role;
   managerId?: string | null;
+  ip?: string | null;
 }
 
 /* ─── Select shape ────────────────────────────────────────────────────────── */
@@ -210,6 +212,18 @@ export async function createOpportunity(raw: unknown, actor: Actor) {
       notes:               input.notes?.trim() ?? null,
     },
     select: OPPORTUNITY_SELECT,
+  }).then((o) => {
+    void audit({
+      actor,
+      module: 'OPPORTUNITIES',
+      action: 'CREATE',
+      entityId: o.id,
+      entityLabel: o.name,
+      summary: `Created opportunity "${o.name}"`,
+      details: { stage: o.stage, estimatedValue: o.estimatedValue } as unknown as Prisma.InputJsonValue,
+      relatedUserId: o.marketingPersonId,
+    });
+    return o;
   });
 }
 
@@ -280,5 +294,52 @@ export async function updateOpportunity(
   if (input.managerId           !== undefined) data.managerId           = input.managerId ?? existing.managerId;
   if (input.marketingPersonId   !== undefined && input.marketingPersonId !== null) data.marketingPersonId = input.marketingPersonId;
 
-  return prisma.opportunity.update({ where: { id }, data, select: OPPORTUNITY_SELECT });
+  const updated = prisma.opportunity.update({ where: { id }, data, select: OPPORTUNITY_SELECT });
+
+  void updated.then(async (o) => {
+    const changes = buildFieldChanges(
+      existing as unknown as Record<string, unknown>,
+      data as unknown as Record<string, unknown>
+    );
+    const audits: Parameters<typeof audit>[0][] = [{
+      actor,
+      module: 'OPPORTUNITIES',
+      action: 'UPDATE',
+      entityId: o.id,
+      entityLabel: o.name,
+      summary: `Updated opportunity "${o.name}" (${changes.changed.length} fields)`,
+      details: changes as unknown as Prisma.InputJsonValue,
+      relatedUserId: o.marketingPersonId,
+    }];
+    if (changes.changed.some((c) => c.field === 'stage')) {
+      audits.push({
+        actor,
+        module: 'OPPORTUNITIES',
+        action: 'STATUS_CHANGE',
+        entityId: o.id,
+        entityLabel: o.name,
+        summary: `Opportunity stage changed: ${existing.stage} → ${o.stage}`,
+        details: { old: { stage: existing.stage }, new: { stage: o.stage } } as unknown as Prisma.InputJsonValue,
+        relatedUserId: o.marketingPersonId,
+      });
+    }
+    if (changes.changed.some((c) => c.field === 'marketingPersonId')) {
+      audits.push({
+        actor,
+        module: 'OPPORTUNITIES',
+        action: existing.marketingPersonId ? 'REASSIGN' : 'ASSIGN',
+        entityId: o.id,
+        entityLabel: o.name,
+        summary: `Opportunity re-assigned to marketing person ${o.marketingPersonId}`,
+        details: {
+          old: { marketingPersonId: existing.marketingPersonId },
+          new: { marketingPersonId: o.marketingPersonId },
+        } as unknown as Prisma.InputJsonValue,
+        relatedUserId: o.marketingPersonId,
+      });
+    }
+    await Promise.all(audits.map((a) => audit(a)));
+  });
+  return updated;
 }
+

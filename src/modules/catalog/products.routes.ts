@@ -35,7 +35,7 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
 // POST /api/products — Admin only
 router.post('/', authenticate, authorize(['ADMIN']), async (req: Request, res: Response) => {
   try {
-    const result = await createProduct(req.body);
+    const result = await createProduct(req.body, req.user!.id);
     return ok(res, result);
   } catch (err) {
     return handleError(res, err);
@@ -45,7 +45,7 @@ router.post('/', authenticate, authorize(['ADMIN']), async (req: Request, res: R
 // PATCH /api/products/:id — Admin only
 router.patch('/:id', authenticate, authorize(['ADMIN']), async (req: Request, res: Response) => {
   try {
-    const result = await updateProduct(String(req.params.id), req.body);
+    const result = await updateProduct(String(req.params.id), req.body, req.user!.id);
     return ok(res, result);
   } catch (err) {
     return handleError(res, err);
@@ -55,7 +55,7 @@ router.patch('/:id', authenticate, authorize(['ADMIN']), async (req: Request, re
 // DELETE /api/products/:id — Admin only
 router.delete('/:id', authenticate, authorize(['ADMIN']), async (req: Request, res: Response) => {
   try {
-    const result = await deleteProduct(String(req.params.id));
+    const result = await deleteProduct(String(req.params.id), req.user!.id);
     return ok(res, result);
   } catch (err) {
     return handleError(res, err);

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { UserStatus, type Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { applyListQuery, buildMeta } from '../../lib/list-query';
+import { audit, buildFieldChanges } from '../../lib/audit';
 
 /* ─── Zod schemas ─────────────────────────────────────────────────────────── */
 export const createProductSchema = z.object({
@@ -66,7 +67,7 @@ export async function getProduct(id: string) {
 }
 
 /* ─── Create ──────────────────────────────────────────────────────────────── */
-export async function createProduct(raw: unknown) {
+export async function createProduct(raw: unknown, actorId?: string) {
   const input = createProductSchema.parse(raw);
 
   // Verify category exists and pull serviceId from it
@@ -99,11 +100,22 @@ export async function createProduct(raw: unknown) {
       status:      input.status,
     },
     select: PRODUCT_SELECT,
+  }).then((p) => {
+    if (actorId) void audit({
+      actor: { id: actorId, role: 'ADMIN' as const },
+      module: 'PRODUCTS',
+      action: 'CREATE',
+      entityId: p.id,
+      entityLabel: p.name,
+      summary: `Created product "${p.name}"`,
+      details: { categoryId: p.category?.id, categoryName: p.category?.name } as unknown as Prisma.InputJsonValue,
+    });
+    return p;
   });
 }
 
 /* ─── Update ──────────────────────────────────────────────────────────────── */
-export async function updateProduct(id: string, raw: unknown) {
+export async function updateProduct(id: string, raw: unknown, actorId?: string) {
   const existing = await prisma.product.findUnique({ where: { id } });
   if (!existing) throw Object.assign(new Error('Product not found'), { code: 'NOT_FOUND', status: 404 });
 
@@ -141,11 +153,27 @@ export async function updateProduct(id: string, raw: unknown) {
   if (input.unit !== undefined)        data.unit        = input.unit.trim();
   if (input.status !== undefined)      data.status      = input.status;
 
-  return prisma.product.update({ where: { id }, data, select: PRODUCT_SELECT });
+  const updated = prisma.product.update({ where: { id }, data, select: PRODUCT_SELECT });
+
+  if (actorId) {
+    void updated.then((p) => audit({
+      actor: { id: actorId, role: 'ADMIN' as const },
+      module: 'PRODUCTS',
+      action: 'UPDATE',
+      entityId: p.id,
+      entityLabel: p.name,
+      summary: `Updated product "${p.name}" (fields: ${buildFieldChanges(existing as unknown as Record<string,unknown>, data as unknown as Record<string,unknown>).changed.length})`,
+      details: buildFieldChanges(
+        existing as unknown as Record<string, unknown>,
+        data as unknown as Record<string, unknown>
+      ) as unknown as Prisma.InputJsonValue,
+    }));
+  }
+  return updated;
 }
 
 /* ─── Delete ──────────────────────────────────────────────────────────────── */
-export async function deleteProduct(id: string) {
+export async function deleteProduct(id: string, actorId?: string) {
   const existing = await prisma.product.findUnique({ where: { id } });
   if (!existing) throw Object.assign(new Error('Product not found'), { code: 'NOT_FOUND', status: 404 });
 
@@ -164,5 +192,14 @@ export async function deleteProduct(id: string) {
   }
 
   await prisma.product.delete({ where: { id } });
+  if (actorId) void audit({
+    actor: { id: actorId, role: 'ADMIN' as const },
+    module: 'PRODUCTS',
+    action: 'DELETE',
+    entityId: existing.id,
+    entityLabel: existing.name,
+    summary: `Deleted product "${existing.name}"`,
+    details: { categoryId: existing.categoryId, statusBefore: existing.status } as unknown as Prisma.InputJsonValue,
+  });
   return { id, deleted: true };
 }
