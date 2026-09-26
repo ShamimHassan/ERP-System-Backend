@@ -76,9 +76,15 @@ async function resolveOwnership(
     return { marketingPersonId, managerId: actor.id };
   }
 
-  // ADMIN
+  // ADMIN — validate both users exist
   if (!input.marketingPersonId) throw Object.assign(new Error('marketingPersonId is required'), { code: 'VALIDATION_ERROR', status: 400 });
   if (!input.managerId)         throw Object.assign(new Error('managerId is required'), { code: 'VALIDATION_ERROR', status: 400 });
+  const [mktUser, mgrUser] = await Promise.all([
+    prisma.user.findFirst({ where: { id: input.marketingPersonId, deletedAt: null } }),
+    prisma.user.findFirst({ where: { id: input.managerId, deletedAt: null } }),
+  ]);
+  if (!mktUser) throw Object.assign(new Error('Marketing person not found'), { code: 'NOT_FOUND', status: 404 });
+  if (!mgrUser) throw Object.assign(new Error('Manager not found'), { code: 'NOT_FOUND', status: 404 });
   return { marketingPersonId: input.marketingPersonId, managerId: input.managerId };
 }
 
@@ -98,15 +104,11 @@ export async function listCustomers(
   }
 
   const base = scopedWhere(visibleUserIds, extraWhere);
-  const { skip, take, where, page, limit } =
+  const { skip, take, where, orderBy, page, limit } =
     applyListQuery<Prisma.CustomerWhereInput>(query, base, ['contactPerson', 'companyName', 'phone', 'email']);
 
-  const sortField = String(query.sort ?? '-createdAt').replace(/^-/, '');
-  const sortDir: Prisma.SortOrder = String(query.sort ?? '').startsWith('-') || !query.sort ? 'desc' : 'asc';
-  const orderBy: Prisma.CustomerOrderByWithRelationInput = { [sortField]: sortDir };
-
   const [rows, total] = await Promise.all([
-    prisma.customer.findMany({ where, orderBy, skip, take, select: CUSTOMER_SELECT }),
+    prisma.customer.findMany({ where, orderBy: orderBy as Prisma.CustomerOrderByWithRelationInput[], skip, take, select: CUSTOMER_SELECT }),
     prisma.customer.count({ where }),
   ]);
 
@@ -160,7 +162,6 @@ export async function updateCustomer(
 
   const input = updateCustomerSchema.parse(raw);
 
-  // Marketing: cannot reassign marketingPersonId to someone else
   if (actor.role === 'MARKETING') {
     if (input.marketingPersonId && input.marketingPersonId !== actor.id) {
       throw Object.assign(new Error('You cannot reassign this customer to another person'), { code: 'FORBIDDEN', status: 403 });
@@ -175,6 +176,29 @@ export async function updateCustomer(
       });
       if (!member) throw Object.assign(new Error('Marketing person must be a member of your team'), { code: 'FORBIDDEN', status: 403 });
     }
+  }
+
+  if (actor.role === 'ADMIN') {
+    const checks: Promise<unknown>[] = [];
+    if (input.marketingPersonId) {
+      checks.push(
+        prisma.user
+          .findFirst({ where: { id: input.marketingPersonId, deletedAt: null } })
+          .then((u) => {
+            if (!u) throw Object.assign(new Error('Marketing person not found'), { code: 'NOT_FOUND', status: 404 });
+          })
+      );
+    }
+    if (input.managerId) {
+      checks.push(
+        prisma.user
+          .findFirst({ where: { id: input.managerId, deletedAt: null } })
+          .then((u) => {
+            if (!u) throw Object.assign(new Error('Manager not found'), { code: 'NOT_FOUND', status: 404 });
+          })
+      );
+    }
+    if (checks.length) await Promise.all(checks);
   }
 
   const data: Prisma.CustomerUncheckedUpdateInput = {};
