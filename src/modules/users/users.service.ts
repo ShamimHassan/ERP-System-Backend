@@ -119,6 +119,8 @@ interface ListParams {
   sort?: string;
   search?: string;
   status?: string;
+  dateFrom?: string;
+  dateTo?: string;
   visibleUserIds: string[] | null;
 }
 
@@ -126,7 +128,7 @@ export async function listUsers(params: ListParams): Promise<UserListResult> {
   const { skip, take, orderBy, where, page, limit } = (
     await import('../../lib/list-query')
   ).applyListQuery(
-    { page: params.page, limit: params.limit, sort: params.sort, search: params.search, status: params.status },
+    { page: params.page, limit: params.limit, sort: params.sort, search: params.search, status: params.status, dateFrom: params.dateFrom, dateTo: params.dateTo },
     params.visibleUserIds === null
       ? ({ deletedAt: null } as object)
       : ({ id: { in: params.visibleUserIds }, deletedAt: null } as object),

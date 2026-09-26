@@ -229,12 +229,6 @@ export async function listQuotations(
   if (query.customerId)        extraWhere.customerId        = query.customerId as string;
   if (query.opportunityId)     extraWhere.opportunityId     = query.opportunityId as string;
 
-  if (query.dateFrom || query.dateTo) {
-    extraWhere.createdAt = {};
-    if (query.dateFrom) (extraWhere.createdAt as Prisma.DateTimeFilter).gte = new Date(query.dateFrom as string);
-    if (query.dateTo)   (extraWhere.createdAt as Prisma.DateTimeFilter).lte = new Date(query.dateTo as string);
-  }
-
   const base = scopedWhere(visibleUserIds, extraWhere);
   const { skip, take, where, orderBy, page, limit } =
     applyListQuery<Prisma.QuotationWhereInput>(query, base, ['quotationNumber', 'notes']);

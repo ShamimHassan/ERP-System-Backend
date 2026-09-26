@@ -30,6 +30,8 @@ router.get(
         sort:    req.query.sort as string | undefined,
         search:  req.query.search as string | undefined,
         status:  req.query.status as string | undefined,
+        dateFrom: req.query.dateFrom as string | undefined,
+        dateTo:   req.query.dateTo as string | undefined,
         visibleUserIds: req.visibleUserIds ?? null,
       });
       return ok(res, result.data, result.meta);

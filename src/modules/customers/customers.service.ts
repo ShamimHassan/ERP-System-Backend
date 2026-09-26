@@ -99,11 +99,6 @@ export async function listCustomers(
   if (query.customerType)      extraWhere.customerType      = query.customerType as CustomerType;
   if (query.managerId)         extraWhere.managerId         = query.managerId as string;
   if (query.marketingPersonId) extraWhere.marketingPersonId = query.marketingPersonId as string;
-  if (query.dateFrom || query.dateTo) {
-    extraWhere.createdAt = {};
-    if (query.dateFrom) (extraWhere.createdAt as Prisma.DateTimeFilter).gte = new Date(query.dateFrom as string);
-    if (query.dateTo)   (extraWhere.createdAt as Prisma.DateTimeFilter).lte = new Date(query.dateTo as string);
-  }
 
   const base = scopedWhere(visibleUserIds, extraWhere);
   const { skip, take, where, orderBy, page, limit } =

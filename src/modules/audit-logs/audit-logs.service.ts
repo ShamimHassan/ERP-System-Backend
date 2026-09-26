@@ -38,7 +38,7 @@ export async function listAuditLogs(scope: AuditScope, query: ListAuditQuery) {
   const { where } = await resolveAuditWhereScope(scope, query);
 
   const { skip, take, orderBy, page, limit } =
-    applyListQuery(query as unknown as Record<string, unknown>, where, []);
+    applyListQuery(query as unknown as Record<string, unknown>, where, [], false);
 
   const [rows, total] = await Promise.all([
     prisma.auditLog.findMany({ where, orderBy, skip, take, select: AUDIT_SELECT }),

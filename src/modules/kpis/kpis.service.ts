@@ -333,28 +333,36 @@ export async function listTargets(
     where.periodStart = { gte: s, lt: e };
   }
 
+  const page  = Math.max(1, Number(query.page  ?? 1));
+  const limit = Math.min(100, Math.max(1, Number(query.limit ?? 50)));
+  const skip  = (page - 1) * limit;
+
   const [items, total] = await Promise.all([
     prisma.target.findMany({
       where: where as never,
       include: { user: { select: { id: true, name: true, email: true, role: true } } },
       orderBy: [{ periodStart: 'desc' }, { userId: 'asc' }, { metric: 'asc' }],
+      skip,
+      take: limit,
     }),
     prisma.target.count({ where: where as never }),
   ]);
 
+  const totalPages = Math.ceil(total / limit) || 1;
+
   return {
     data: items.map((t) => ({
-      id: t.id,
-      userId: t.userId,
-      userName: t.user.name,
-      userRole: t.user.role,
-      periodType: t.periodType,
+      id:          t.id,
+      userId:      t.userId,
+      userName:    t.user.name,
+      userRole:    t.user.role,
+      periodType:  t.periodType,
       periodStart: t.periodStart.toISOString().slice(0, 10),
-      periodEnd: t.periodEnd.toISOString().slice(0, 10),
-      metric: t.metric,
+      periodEnd:   t.periodEnd.toISOString().slice(0, 10),
+      metric:      t.metric,
       targetValue: Number(t.targetValue),
     })),
-    meta: { total },
+    meta: { page, limit, total, totalPages },
   };
 }
 

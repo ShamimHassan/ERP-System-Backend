@@ -38,11 +38,13 @@ export function validate(schema: z.ZodTypeAny, target: Target = 'body') {
 
 /* ─── Common list-query schema (shared across all GET list endpoints) ─── */
 export const listQuerySchema = z.object({
-  page:    z.coerce.number().int().min(1).max(10000).optional(),
-  limit:   z.coerce.number().int().min(1).max(100).optional(),
-  sort:    z.string().max(100).optional(),
-  search:  z.string().max(200).optional(),
-  status:  z.string().max(50).optional(),
-  dateFrom: z.string().date().optional(),
-  dateTo:   z.string().date().optional(),
-}).passthrough(); // allow module-specific filters through
+  page:     z.coerce.number().int().min(1).max(10000).optional(),
+  limit:    z.coerce.number().int().min(1).max(100).optional(),
+  // sort: comma-separated field names, optional leading '-' for desc
+  // e.g. "-createdAt,name"  — only allow safe chars
+  sort:     z.string().max(100).regex(/^[a-zA-Z0-9_,.\- ]+$/, 'Invalid sort value').optional(),
+  search:   z.string().max(200).optional(),
+  status:   z.string().max(50).optional(),
+  dateFrom: z.string().date('dateFrom must be YYYY-MM-DD').optional(),
+  dateTo:   z.string().date('dateTo must be YYYY-MM-DD').optional(),
+}).passthrough(); // allow module-specific filters (managerId, priority, etc.) through
