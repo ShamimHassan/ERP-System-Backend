@@ -69,6 +69,7 @@ const SALES_ORDER_SELECT = {
   marketingPersonId: true,
   marketingPerson: { select: { id: true, name: true, email: true } },
   items: { select: SALES_ORDER_ITEM_SELECT, orderBy: { id: 'asc' as const } },
+  invoice: { select: { id: true, invoiceNumber: true, amount: true, status: true, issuedAt: true, paidAt: true } },
 } as const;
 
 /* ─── helpers ─────────────────────────────────────────────────────────────── */
@@ -152,7 +153,7 @@ function computeLineTotals(
 
 async function generateOrderNumber(dateIso: string): Promise<string> {
   const ymd = dateIso.replace(/-/g, '');
-  const prefix = `SO-${ymd}-`;
+  const prefix = `ORD-${ymd}-`;
   const last = await prisma.salesOrder.findFirst({
     where: { orderNumber: { startsWith: prefix } },
     orderBy: { orderNumber: 'desc' },
@@ -161,6 +162,22 @@ async function generateOrderNumber(dateIso: string): Promise<string> {
   let seq = 1;
   if (last) {
     const m = last.orderNumber.match(/-(\d{4})$/);
+    if (m) seq = parseInt(m[1], 10) + 1;
+  }
+  return `${prefix}${seq.toString().padStart(4, '0')}`;
+}
+
+async function generateInvoiceNumber(dateIso: string): Promise<string> {
+  const ymd = dateIso.replace(/-/g, '');
+  const prefix = `INV-${ymd}-`;
+  const last = await prisma.invoice.findFirst({
+    where: { invoiceNumber: { startsWith: prefix } },
+    orderBy: { invoiceNumber: 'desc' },
+    select: { invoiceNumber: true },
+  });
+  let seq = 1;
+  if (last) {
+    const m = last.invoiceNumber.match(/-(\d{4})$/);
     if (m) seq = parseInt(m[1], 10) + 1;
   }
   return `${prefix}${seq.toString().padStart(4, '0')}`;
@@ -505,5 +522,37 @@ export async function deleteSalesOrderItem(
     await tx.salesOrder.update({ where: { id: salesOrderId }, data: { grandTotal } });
 
     return { id: itemId, deleted: true };
+  });
+}
+
+/* ─── Cancel Sales Order ──────────────────────────────────────────────────── */
+export async function cancelSalesOrder(
+  id: string,
+  actor: Actor,
+  visibleUserIds: string[] | null
+) {
+  const existing = await prisma.salesOrder.findFirst({
+    where: { AND: [{ id }, ownerFilter('marketingPersonId', visibleUserIds)] },
+  });
+  if (!existing) notFound();
+
+  if (existing.status === SalesOrderStatus.CANCELLED) {
+    throw Object.assign(new Error('Sales Order is already cancelled'), {
+      code: 'BAD_REQUEST', status: 400,
+    });
+  }
+
+  if (existing.status === SalesOrderStatus.COMPLETED) {
+    throw Object.assign(new Error('Completed Sales Order cannot be cancelled'), {
+      code: 'BAD_REQUEST', status: 400,
+    });
+  }
+
+  void actor;
+
+  return prisma.salesOrder.update({
+    where: { id },
+    data: { status: SalesOrderStatus.CANCELLED },
+    select: SALES_ORDER_SELECT,
   });
 }

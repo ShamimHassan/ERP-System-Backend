@@ -5,7 +5,7 @@ import { ok, fail } from '../../lib/response';
 import type { Role } from '@prisma/client';
 import {
   listSalesOrders, getSalesOrder, createSalesOrder, updateSalesOrder,
-  addSalesOrderItem, deleteSalesOrderItem,
+  addSalesOrderItem, deleteSalesOrderItem, cancelSalesOrder,
 } from './sales-orders.service';
 
 const router = Router();
@@ -75,6 +75,16 @@ router.delete('/:id/items/:itemId', authenticate, scopeData(), async (req: Reque
   try {
     const result = await deleteSalesOrderItem(
       String(req.params.id), String(req.params.itemId), req.visibleUserIds ?? null
+    );
+    return ok(res, result);
+  } catch (err) { return handleError(res, err); }
+});
+
+// POST /api/sales-orders/:id/cancel
+router.post('/:id/cancel', authenticate, scopeData(), async (req: Request, res: Response) => {
+  try {
+    const result = await cancelSalesOrder(
+      String(req.params.id), actorOf(req), req.visibleUserIds ?? null
     );
     return ok(res, result);
   } catch (err) { return handleError(res, err); }

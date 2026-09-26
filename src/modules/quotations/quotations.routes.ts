@@ -7,6 +7,7 @@ import {
   listQuotations, getQuotation, createQuotation, updateQuotation,
   addQuotationItem, deleteQuotationItem,
   submitApproval, approveQuotation, rejectQuotation,
+  convertQuotationToOrder,
 } from './quotations.service';
 
 const router = Router();
@@ -106,6 +107,16 @@ router.post('/:id/reject', authenticate, scopeData(), authorize(['MANAGER', 'ADM
   try {
     const result = await rejectQuotation(
       String(req.params.id), req.body, actorOf(req), req.visibleUserIds ?? null
+    );
+    return ok(res, result);
+  } catch (err) { return handleError(res, err); }
+});
+
+// POST /api/quotations/:id/convert-to-order
+router.post('/:id/convert-to-order', authenticate, scopeData(), async (req: Request, res: Response) => {
+  try {
+    const result = await convertQuotationToOrder(
+      String(req.params.id), actorOf(req), req.visibleUserIds ?? null
     );
     return ok(res, result);
   } catch (err) { return handleError(res, err); }

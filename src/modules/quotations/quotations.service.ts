@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  ApprovalStatus, QuotationStatus, Role, UserStatus,
+  ApprovalStatus, InvoiceStatus, QuotationStatus, Role, SalesOrderStatus, UserStatus,
   type Prisma,
 } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
@@ -699,6 +699,194 @@ export async function rejectQuotation(
       remarks: input.remarks,
       quotation: updated,
     };
+  });
+
+  return result;
+}
+
+/* ─── Order/Invoice number generators (local copy to avoid cross-module import) */
+async function genOrderNumber(dateIso: string): Promise<string> {
+  const ymd = dateIso.replace(/-/g, '');
+  const prefix = `ORD-${ymd}-`;
+  const last = await prisma.salesOrder.findFirst({
+    where: { orderNumber: { startsWith: prefix } },
+    orderBy: { orderNumber: 'desc' },
+    select: { orderNumber: true },
+  });
+  let seq = 1;
+  if (last) {
+    const m = last.orderNumber.match(/-(\d{4})$/);
+    if (m) seq = parseInt(m[1], 10) + 1;
+  }
+  return `${prefix}${seq.toString().padStart(4, '0')}`;
+}
+async function genInvoiceNumber(dateIso: string): Promise<string> {
+  const ymd = dateIso.replace(/-/g, '');
+  const prefix = `INV-${ymd}-`;
+  const last = await prisma.invoice.findFirst({
+    where: { invoiceNumber: { startsWith: prefix } },
+    orderBy: { invoiceNumber: 'desc' },
+    select: { invoiceNumber: true },
+  });
+  let seq = 1;
+  if (last) {
+    const m = last.invoiceNumber.match(/-(\d{4})$/);
+    if (m) seq = parseInt(m[1], 10) + 1;
+  }
+  return `${prefix}${seq.toString().padStart(4, '0')}`;
+}
+
+/* ─── Convert APPROVED Quotation → Sales Order (Step 16) */
+export async function convertQuotationToOrder(
+  quotationId: string,
+  actor: Actor,
+  visibleUserIds: string[] | null
+) {
+  void actor;
+
+  const quotation = await prisma.quotation.findFirst({
+    where: { AND: [{ id: quotationId }, ownerFilter('marketingPersonId', visibleUserIds)] },
+    include: {
+      items: {
+        orderBy: { id: 'asc' as const },
+        select: {
+          id: true, productId: true, quantity: true, unitPrice: true,
+          discount: true, tax: true, lineTotal: true,
+        },
+      },
+    },
+  });
+  if (!quotation) notFound();
+
+  if (quotation.status === QuotationStatus.CONVERTED) {
+    throw Object.assign(new Error('Quotation has already been converted to a Sales Order'), {
+      code: 'CONFLICT', status: 409,
+    });
+  }
+
+  if (quotation.status === QuotationStatus.REJECTED) {
+    throw Object.assign(new Error('Rejected quotation cannot be converted to Sales Order'), {
+      code: 'BAD_REQUEST', status: 409,
+    });
+  }
+
+  if (quotation.status !== QuotationStatus.APPROVED) {
+    throw Object.assign(new Error('Only APPROVED quotations can be converted to Sales Orders'), {
+      code: 'BAD_REQUEST', status: 400,
+    });
+  }
+
+  if (!quotation.items.length) {
+    throw Object.assign(new Error('Quotation has no line items'), {
+      code: 'BAD_REQUEST', status: 400,
+    });
+  }
+
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const [orderNumber, invoiceNumber] = await Promise.all([
+    genOrderNumber(todayIso),
+    genInvoiceNumber(todayIso),
+  ]);
+
+  const result = await prisma.$transaction(async (tx) => {
+    const doubleCheck = await tx.salesOrder.findFirst({
+      where: { quotationId: quotation.id },
+      select: { id: true },
+    });
+    if (doubleCheck) {
+      throw Object.assign(new Error('A Sales Order for this quotation already exists'), {
+        code: 'CONFLICT', status: 409,
+      });
+    }
+
+    const salesOrder = await tx.salesOrder.create({
+      data: {
+        orderNumber,
+        customerId: quotation.customerId,
+        quotationId: quotation.id,
+        managerId: quotation.managerId,
+        marketingPersonId: quotation.marketingPersonId,
+        orderDate: new Date(todayIso),
+        expectedActivationDate: null,
+        discountTotal: Number(quotation.discountTotal),
+        taxTotal: Number(quotation.taxTotal),
+        grandTotal: Number(quotation.grandTotal),
+        paymentTerms: quotation.paymentTerms,
+        status: SalesOrderStatus.CONFIRMED,
+        items: {
+          create: quotation.items.map((it) => ({
+            productId: it.productId,
+            quantity: it.quantity,
+            unitPrice: Number(it.unitPrice),
+            discount: Number(it.discount),
+            tax: Number(it.tax),
+            lineTotal: Number(it.lineTotal),
+          })),
+        },
+      },
+      select: {
+        id: true, orderNumber: true, orderDate: true, expectedActivationDate: true,
+        discountTotal: true, taxTotal: true, grandTotal: true,
+        paymentTerms: true, status: true, createdAt: true, updatedAt: true,
+        customerId: true, quotationId: true,
+        customer: { select: { id: true, companyName: true, contactPerson: true, phone: true, email: true } },
+        quotation: { select: { id: true, quotationNumber: true, status: true } },
+        managerId: true,
+        manager: { select: { id: true, name: true, email: true } },
+        marketingPersonId: true,
+        marketingPerson: { select: { id: true, name: true, email: true } },
+        items: {
+          orderBy: { id: 'asc' as const },
+          select: {
+            id: true, productId: true, quantity: true, unitPrice: true,
+            discount: true, tax: true, lineTotal: true,
+            product: { select: { id: true, name: true, unit: true } },
+          },
+        },
+      },
+    });
+
+    await tx.invoice.create({
+      data: {
+        salesOrderId: salesOrder.id,
+        invoiceNumber,
+        amount: Number(quotation.grandTotal),
+        status: InvoiceStatus.ISSUED,
+        issuedAt: new Date(),
+      },
+    });
+
+    await tx.quotation.update({
+      where: { id: quotation.id },
+      data: { status: QuotationStatus.CONVERTED },
+    });
+
+    const orderWithInvoice = await tx.salesOrder.findFirst({
+      where: { id: salesOrder.id },
+      select: {
+        id: true, orderNumber: true, orderDate: true, expectedActivationDate: true,
+        discountTotal: true, taxTotal: true, grandTotal: true,
+        paymentTerms: true, status: true, createdAt: true, updatedAt: true,
+        customerId: true, quotationId: true,
+        customer: { select: { id: true, companyName: true, contactPerson: true, phone: true, email: true } },
+        quotation: { select: { id: true, quotationNumber: true, status: true } },
+        managerId: true,
+        manager: { select: { id: true, name: true, email: true } },
+        marketingPersonId: true,
+        marketingPerson: { select: { id: true, name: true, email: true } },
+        items: {
+          orderBy: { id: 'asc' as const },
+          select: {
+            id: true, productId: true, quantity: true, unitPrice: true,
+            discount: true, tax: true, lineTotal: true,
+            product: { select: { id: true, name: true, unit: true } },
+          },
+        },
+        invoice: { select: { id: true, invoiceNumber: true, amount: true, status: true, issuedAt: true, paidAt: true } },
+      },
+    });
+
+    return orderWithInvoice;
   });
 
   return result;
