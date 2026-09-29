@@ -161,6 +161,44 @@ async function getCurrentActivePriceWithMin(productId: string): Promise<{ id: st
 }
 
 /**
+ * Batch-fetch current active price info for multiple productIds.
+ * Returns a Map<productId, {id, minimumPrice, sellingPrice}>
+ * — eliminates N+1 queries when validating line items.
+ */
+async function getBatchActivePricesWithMin(
+  productIds: string[]
+): Promise<Map<string, { id: string; minimumPrice: number; sellingPrice: number }>> {
+  const uniqueIds = [...new Set(productIds)];
+  if (uniqueIds.length === 0) return new Map();
+
+  // One query per product ordered by effectiveDate desc — use findMany
+  // with productId IN, then post-filter because Prisma can't do "limit 1 per group" easily.
+  const rows = await prisma.productPrice.findMany({
+    where: {
+      productId: { in: uniqueIds },
+      status: UserStatus.ACTIVE,
+      effectiveDate: { lte: new Date() },
+    },
+    orderBy: [{ productId: 'asc' }, { effectiveDate: 'desc' }],
+    select: { id: true, productId: true, minimumPrice: true, sellingPrice: true },
+  });
+
+  // Keep only the first (latest effectiveDate) per productId
+  const seen = new Set<string>();
+  const result = new Map<string, { id: string; minimumPrice: number; sellingPrice: number }>();
+  for (const row of rows) {
+    if (seen.has(row.productId)) continue;
+    seen.add(row.productId);
+    result.set(row.productId, {
+      id: row.id,
+      minimumPrice: Number(row.minimumPrice),
+      sellingPrice: Number(row.sellingPrice),
+    });
+  }
+  return result;
+}
+
+/**
  * ⚠️ NEVER trust client totals — recalculate lineTotal for every item
  * and recompute grandTotal = Σ lineTotals - discountTotal + taxTotal_adjusted
  *
@@ -207,9 +245,12 @@ async function validateApprovalReadiness(
     },
   });
 
+  // Batch-fetch prices in ONE query instead of N round-trips
+  const priceMap = await getBatchActivePricesWithMin(items.map((i) => i.productId));
+
   const failed: string[] = [];
   for (const item of items) {
-    const priceInfo = await getCurrentActivePriceWithMin(item.productId);
+    const priceInfo = priceMap.get(item.productId);
     const minPrice = priceInfo ? priceInfo.minimumPrice : Number(item.unitPrice);
     const unitPrice = Number(item.unitPrice);
     if (unitPrice >= minPrice) continue;
@@ -339,7 +380,7 @@ export async function createQuotation(raw: unknown, actor: Actor) {
     return header;
   });
 
-  await audit({
+  void audit({
     actor,
     module: 'QUOTATIONS',
     action: 'CREATE',
@@ -358,7 +399,7 @@ export async function createQuotation(raw: unknown, actor: Actor) {
   });
 
   if (Number(input.discountTotal) > 0) {
-    await audit({
+    void audit({
       actor,
       module: 'QUOTATIONS',
       action: 'DISCOUNT_CHANGE',
@@ -664,11 +705,15 @@ export async function submitApproval(
   });
   if (!quotation) notFound();
 
+  // Batch-fetch prices in ONE query instead of N round-trips
+  const productIds = quotation.items.map((i) => i.productId);
+  const priceMap = await getBatchActivePricesWithMin(productIds);
+
   const created: Array<{ quotationItemId: string; requestedPrice: number; minimumPrice: number }> = [];
   const skipped: Array<{ quotationItemId: string; reason: string }> = [];
 
   for (const item of quotation.items) {
-    const priceInfo = await getCurrentActivePriceWithMin(item.productId);
+    const priceInfo = priceMap.get(item.productId);
     if (!priceInfo) {
       skipped.push({ quotationItemId: item.id, reason: 'No active price found for product' });
       continue;

@@ -103,7 +103,7 @@ export async function refreshToken(raw: unknown) {
   let payload: JwtUserPayload;
   try {
     payload = verifyRefreshToken(input.refreshToken);
-  } catch (err) {
+  } catch (_err) {
     throw Object.assign(new Error('Invalid or expired refresh token'), {
       code: 'INVALID_REFRESH_TOKEN',
       status: 401,
@@ -206,5 +206,5 @@ export async function ensureDemoAdmin(): Promise<void> {
       status: 'ACTIVE',
     },
   });
-  console.info('[auth] Demo admin created: admin@erp.com / Admin@123');
+  console.log('[auth] Demo admin created: admin@erp.com / Admin@123');
 }

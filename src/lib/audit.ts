@@ -58,7 +58,6 @@ export async function audit(opts: WriteAuditOptions): Promise<void> {
     });
   } catch (err) {
     // Never let audit logging break the business path — fire & forget
-    // eslint-disable-next-line no-console
     console.error('[AUDIT FAIL]', err);
   }
 }

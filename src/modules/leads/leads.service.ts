@@ -422,7 +422,7 @@ export async function deleteLead(
   if (!existing) notFound();
 
   await prisma.lead.update({ where: { id }, data: { deletedAt: new Date() } });
-  await audit({
+  void audit({
     actor,
     module: 'LEADS',
     action: 'DELETE',
@@ -489,7 +489,7 @@ export async function convertLead(
     return { customerId: cust.id, leadId: id, leadStatus: finalLeadStatus };
   });
 
-  await audit({
+  void audit({
     actor,
     module: 'LEADS',
     action: 'CONVERT',
@@ -503,7 +503,7 @@ export async function convertLead(
     } as unknown as Prisma.InputJsonValue,
     relatedUserId: lead.marketingPersonId,
   });
-  await audit({
+  void audit({
     actor,
     module: 'CUSTOMERS',
     action: 'CREATE',

@@ -161,7 +161,7 @@ export async function addPrice(
     return created;
   });
 
-  await audit({
+  void audit({
     actor: { id: actorId, role: 'ADMIN' as const },
     module: 'PRICES',
     action: 'PRICE_CHANGE',
@@ -249,7 +249,7 @@ export async function updatePrice(
     return created;
   });
 
-  await audit({
+  void audit({
     actor: { id: actorId, role: 'ADMIN' as const },
     module: 'PRICES',
     action: 'PRICE_CHANGE',

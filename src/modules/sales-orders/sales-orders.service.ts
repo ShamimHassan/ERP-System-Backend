@@ -169,7 +169,7 @@ async function generateOrderNumber(dateIso: string): Promise<string> {
   return `${prefix}${seq.toString().padStart(4, '0')}`;
 }
 
-async function generateInvoiceNumber(dateIso: string): Promise<string> {
+async function _generateInvoiceNumber(dateIso: string): Promise<string> {
   const ymd = dateIso.replace(/-/g, '');
   const prefix = `INV-${ymd}-`;
   const last = await prisma.invoice.findFirst({

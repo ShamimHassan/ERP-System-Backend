@@ -34,10 +34,44 @@ const app = express();
 
 app.set('trust proxy', 1);
 
-// ── CORS ── whitelist only — no wildcard ───────────────────────────────────
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  Manual CORS preflight — catches OPTIONS BEFORE any other middleware    ║
+// ║  Nothing can interfere: no helmet, no body-parser, no rate-limit.       ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.method !== 'OPTIONS') return next();
+  const origin = req.headers.origin ?? '*';
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  res.status(204).end();
+  return;
+});
+
+// ── Health check — BEFORE CORS so warmup pings always work ───────────────
+// This endpoint must respond instantly without touching the database.
+// Frontend BackendWarmup component hits this on login page mount to
+// pre-warm the Vercel serverless function.
+app.get('/health', (_req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*'); // allow any origin for warmup
+  ok(res, {
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/', (_req, res) => {
+  ok(res, { message: 'ERP Sales & Marketing API' });
+});
+
+// ── CORS for actual requests (non-OPTIONS) ────────────────────────────────
+// Preflight is handled above.  This adds response headers for the real call.
 app.use(
   cors({
-    origin: env.CORS_ORIGIN,
+    origin: true,
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
@@ -159,18 +193,6 @@ app.use(
 app.get('/api-docs.json', (_req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.send(swaggerSpec);
-});
-
-app.get('/health', (_req, res) => {
-  ok(res, {
-    status: 'ok',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-  });
-});
-
-app.get('/', (_req, res) => {
-  ok(res, { message: 'Hello World from ERP Backend!' });
 });
 
 app.use('/api/auth', authRoutes);

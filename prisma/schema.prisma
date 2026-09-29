@@ -238,6 +238,9 @@ model Service {
   leads         Lead[]
   opportunities Opportunity[]
   surveys       Survey[]
+
+  @@index([status])
+  @@index([createdAt])
 }
 
 model ProductCategory {
@@ -254,6 +257,9 @@ model ProductCategory {
   opportunities Opportunity[]
 
   @@unique([serviceId, name])
+  @@index([serviceId])
+  @@index([status])
+  @@index([createdAt])
 }
 
 model Product {
@@ -276,6 +282,11 @@ model Product {
   leads           Lead[]
   opportunities   Opportunity[]
   surveys         Survey[]
+
+  @@index([categoryId])
+  @@index([serviceId])
+  @@index([status])
+  @@index([createdAt])
 }
 
 model ProductPrice {
@@ -308,6 +319,10 @@ model ProductPriceHistory {
   changedById     String
   changedBy       User         @relation(fields: [changedById], references: [id])
   changedAt       DateTime     @default(now())
+
+  @@index([productPriceId])
+  @@index([changedById])
+  @@index([changedAt])
 }
 
 model Lead {
@@ -343,6 +358,13 @@ model Lead {
 
   @@index([marketingPersonId, status])
   @@index([managerId])
+  @@index([status])
+  @@index([priority])
+  @@index([serviceId])
+  @@index([categoryId])
+  @@index([productId])
+  @@index([nextFollowUp])
+  @@index([createdAt])
 }
 
 model Customer {
@@ -370,6 +392,12 @@ model Customer {
   salesOrders           SalesOrder[]
   opportunities         Opportunity[]
   surveys               Survey[]
+
+  @@index([status])
+  @@index([customerType])
+  @@index([managerId])
+  @@index([marketingPersonId])
+  @@index([createdAt])
 }
 
 model Opportunity {
@@ -398,6 +426,17 @@ model Opportunity {
 
   quotations            Quotation[]
   surveys               Survey[]
+
+  @@index([stage])
+  @@index([leadId])
+  @@index([customerId])
+  @@index([serviceId])
+  @@index([categoryId])
+  @@index([productId])
+  @@index([managerId])
+  @@index([marketingPersonId])
+  @@index([expectedClosingDate])
+  @@index([createdAt])
 }
 
 model Activity {
@@ -417,6 +456,9 @@ model Activity {
 
   @@index([relatedType, relatedId])
   @@index([assignedUserId, activityDate])
+  @@index([status])
+  @@index([type])
+  @@index([nextFollowUp])
 }
 
 model Survey {
@@ -445,6 +487,16 @@ model Survey {
   status                SurveyStatus
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
+
+  @@index([status])
+  @@index([customerId])
+  @@index([leadId])
+  @@index([opportunityId])
+  @@index([serviceId])
+  @@index([productId])
+  @@index([surveyDate])
+  @@index([assignedPersonId])
+  @@index([createdAt])
 }
 
 model Quotation {
@@ -471,6 +523,15 @@ model Quotation {
 
   items               QuotationItem[]
   salesOrder          SalesOrder?
+
+  @@index([status])
+  @@index([customerId])
+  @@index([opportunityId])
+  @@index([managerId])
+  @@index([marketingPersonId])
+  @@index([quotationDate])
+  @@index([expiryDate])
+  @@index([createdAt])
 }
 
 model QuotationItem {
@@ -486,6 +547,9 @@ model QuotationItem {
   lineTotal     Decimal
 
   approvals     PriceApproval[]
+
+  @@index([quotationId])
+  @@index([productId])
 }
 
 model PriceApproval {
@@ -504,6 +568,13 @@ model PriceApproval {
   requestedAt      DateTime        @default(now())
   decidedAt        DateTime?
   remarks          String?
+
+  @@index([quotationItemId])
+  @@index([productPriceId])
+  @@index([requestedById])
+  @@index([approverId])
+  @@index([status])
+  @@index([requestedAt])
 }
 
 model SalesOrder {
@@ -529,6 +600,13 @@ model SalesOrder {
 
   items                  SalesOrderItem[]
   invoice                Invoice?
+
+  @@index([status])
+  @@index([customerId])
+  @@index([managerId])
+  @@index([marketingPersonId])
+  @@index([orderDate])
+  @@index([createdAt])
 }
 
 model SalesOrderItem {
@@ -542,6 +620,9 @@ model SalesOrderItem {
   discount      Decimal
   tax           Decimal
   lineTotal     Decimal
+
+  @@index([salesOrderId])
+  @@index([productId])
 }
 
 model Invoice {
@@ -553,6 +634,10 @@ model Invoice {
   status        InvoiceStatus
   issuedAt      DateTime      @default(now())
   paidAt        DateTime?
+
+  @@index([status])
+  @@index([issuedAt])
+  @@index([paidAt])
 }
 
 model Target {
@@ -566,6 +651,10 @@ model Target {
   targetValue  Decimal
 
   @@unique([userId, periodType, periodStart, metric])
+  @@index([userId])
+  @@index([metric])
+  @@index([periodStart])
+  @@index([periodEnd])
 }
 
 model Kpi {
@@ -600,4 +689,6 @@ model AuditLog {
   @@index([actorId, action, createdAt])
   @@index([module, entityId])
   @@index([relatedUserId])
+  @@index([createdAt])
+  @@index([module, action, createdAt])
 }
