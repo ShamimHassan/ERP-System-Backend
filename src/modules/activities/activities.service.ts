@@ -31,8 +31,20 @@ export interface Actor {
   ip?: string | null;
 }
 
-/* ─── Select shape ────────────────────────────────────────────────────────── */
-const ACTIVITY_SELECT = {
+/* ─── Select shapes ──────────────────────────────────────────────────────────
+ * LIST_SELECT   → drop 500-char outcome and 2000-char notes; list view is
+ *                 for scanning type + date + assigned user. Heavy text is
+ *                 only pulled when opening a single activity record.
+ * DETAIL_SELECT → full fields for the detail / create responses.
+ */
+const ACTIVITY_LIST_SELECT = {
+  id: true, relatedType: true, relatedId: true, assignedUserId: true,
+  type: true, activityDate: true, activityTime: true,
+  nextFollowUp: true, status: true, createdAt: true,
+  assignedUser: { select: { id: true, name: true, role: true } },
+} as const;
+
+const ACTIVITY_DETAIL_SELECT = {
   id: true, relatedType: true, relatedId: true, assignedUserId: true,
   type: true, activityDate: true, activityTime: true, outcome: true,
   nextFollowUp: true, notes: true, status: true, createdAt: true,
@@ -122,7 +134,7 @@ export async function listActivities(
   const [rows, total] = await Promise.all([
     prisma.activity.findMany({
       where, orderBy: orderBy as Prisma.ActivityOrderByWithRelationInput[],
-      skip, take, select: ACTIVITY_SELECT,
+      skip, take, select: ACTIVITY_LIST_SELECT,
     }),
     prisma.activity.count({ where }),
   ]);
@@ -134,7 +146,7 @@ export async function listActivities(
 export async function getActivity(id: string, visibleUserIds: string[] | null) {
   const act = await prisma.activity.findFirst({
     where: { AND: [{ id }, ownerFilter('assignedUserId', visibleUserIds)] },
-    select: ACTIVITY_SELECT,
+    select: ACTIVITY_DETAIL_SELECT,
   });
   if (!act) notFound();
   return act;
@@ -159,7 +171,7 @@ export async function createActivity(raw: unknown, actor: Actor) {
       notes:         input.notes?.trim() ?? null,
       status:        input.status,
     },
-    select: ACTIVITY_SELECT,
+    select: ACTIVITY_DETAIL_SELECT,
   });
 }
 

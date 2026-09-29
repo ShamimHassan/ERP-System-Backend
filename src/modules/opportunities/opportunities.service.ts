@@ -34,8 +34,29 @@ export interface Actor {
   ip?: string | null;
 }
 
-/* ─── Select shape ────────────────────────────────────────────────────────── */
-const OPPORTUNITY_SELECT = {
+/* ─── Select shapes ──────────────────────────────────────────────────────────
+ * LIST_SELECT   → light: drop 2000-char notes field; keep FK IDs + shallow
+ *                 name joins (used by the list table badges). Avoids pulling
+ *                 heavy text + 6 full relations for every paginated row.
+ * DETAIL_SELECT → heavy: all fields (notes, updatedAt) + full nested
+ *                 relations for the detail view / create / update responses.
+ */
+const OPPORTUNITY_LIST_SELECT = {
+  id: true, name: true, estimatedValue: true, expectedClosingDate: true,
+  stage: true, createdAt: true,
+  leadId: true, customerId: true, serviceId: true, categoryId: true, productId: true,
+  lead:     { select: { id: true, leadName: true } },
+  customer: { select: { id: true, companyName: true } },
+  service:  { select: { id: true, name: true } },
+  category: { select: { id: true, name: true } },
+  product:  { select: { id: true, name: true } },
+  managerId: true,
+  manager:         { select: { id: true, name: true } },
+  marketingPersonId: true,
+  marketingPerson: { select: { id: true, name: true } },
+} as const;
+
+const OPPORTUNITY_DETAIL_SELECT = {
   id: true, name: true, estimatedValue: true, expectedClosingDate: true,
   stage: true, notes: true, createdAt: true, updatedAt: true,
   leadId: true, customerId: true, serviceId: true, categoryId: true, productId: true,
@@ -163,7 +184,7 @@ export async function listOpportunities(
   const [rows, total] = await Promise.all([
     prisma.opportunity.findMany({
       where, orderBy: orderBy as Prisma.OpportunityOrderByWithRelationInput[],
-      skip, take, select: OPPORTUNITY_SELECT,
+      skip, take, select: OPPORTUNITY_LIST_SELECT,
     }),
     prisma.opportunity.count({ where }),
   ]);
@@ -175,7 +196,7 @@ export async function listOpportunities(
 export async function getOpportunity(id: string, visibleUserIds: string[] | null) {
   const opp = await prisma.opportunity.findFirst({
     where: { AND: [{ id }, ownerFilter('marketingPersonId', visibleUserIds)] },
-    select: OPPORTUNITY_SELECT,
+    select: OPPORTUNITY_DETAIL_SELECT,
   });
   if (!opp) notFound();
   return opp;
@@ -205,7 +226,7 @@ export async function createOpportunity(raw: unknown, actor: Actor) {
       stage:               input.stage,
       notes:               input.notes?.trim() ?? null,
     },
-    select: OPPORTUNITY_SELECT,
+    select: OPPORTUNITY_DETAIL_SELECT,
   }).then((o) => {
     void audit({
       actor,
@@ -288,7 +309,7 @@ export async function updateOpportunity(
   if (input.managerId           !== undefined) data.managerId           = input.managerId ?? existing.managerId;
   if (input.marketingPersonId   !== undefined && input.marketingPersonId !== null) data.marketingPersonId = input.marketingPersonId;
 
-  const updated = prisma.opportunity.update({ where: { id }, data, select: OPPORTUNITY_SELECT });
+  const updated = prisma.opportunity.update({ where: { id }, data, select: OPPORTUNITY_DETAIL_SELECT });
 
   void updated.then(async (o) => {
     const changes = buildFieldChanges(

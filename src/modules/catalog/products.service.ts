@@ -21,8 +21,22 @@ export const updateProductSchema = z.object({
   status:      z.nativeEnum(UserStatus).optional(),
 }).strict();
 
-/* ─── Select shape ────────────────────────────────────────────────────────── */
-const PRODUCT_SELECT = {
+/* ─── Select shapes ──────────────────────────────────────────────────────────
+ * LIST_SELECT    → lightweight: no description (500-char text), no double-nested
+ *                  category→service join. Only what the list table actually displays.
+ * DETAIL_SELECT  → heavy: full data + nested joins for detail/editor views.
+ */
+const PRODUCT_LIST_SELECT = {
+  id:         true,
+  name:       true,
+  unit:       true,
+  status:     true,
+  createdAt:  true,
+  categoryId: true,
+  category:   { select: { id: true, name: true, serviceId: true } },
+} as const;
+
+const PRODUCT_DETAIL_SELECT = {
   id:          true,
   name:        true,
   description: true,
@@ -30,10 +44,12 @@ const PRODUCT_SELECT = {
   status:      true,
   createdAt:   true,
   updatedAt:   true,
+  categoryId:  true,
   category: {
     select: {
       id:      true,
       name:    true,
+      serviceId: true,
       service: { select: { id: true, name: true } },
     },
   },
@@ -52,7 +68,7 @@ export async function listProducts(query: Record<string, unknown>) {
     applyListQuery<Prisma.ProductWhereInput>(query, extraWhere, ['name', 'description']);
 
   const [rows, total] = await Promise.all([
-    prisma.product.findMany({ where, orderBy, skip, take, select: PRODUCT_SELECT }),
+    prisma.product.findMany({ where, orderBy, skip, take, select: PRODUCT_LIST_SELECT }),
     prisma.product.count({ where }),
   ]);
 
@@ -61,7 +77,7 @@ export async function listProducts(query: Record<string, unknown>) {
 
 /* ─── Get one ─────────────────────────────────────────────────────────────── */
 export async function getProduct(id: string) {
-  const product = await prisma.product.findUnique({ where: { id }, select: PRODUCT_SELECT });
+  const product = await prisma.product.findUnique({ where: { id }, select: PRODUCT_DETAIL_SELECT });
   if (!product) throw Object.assign(new Error('Product not found'), { code: 'NOT_FOUND', status: 404 });
   return product;
 }
@@ -99,7 +115,7 @@ export async function createProduct(raw: unknown, actorId?: string) {
       unit:        input.unit.trim(),
       status:      input.status,
     },
-    select: PRODUCT_SELECT,
+    select: PRODUCT_DETAIL_SELECT,
   }).then((p) => {
     if (actorId) void audit({
       actor: { id: actorId, role: 'ADMIN' as const },
@@ -153,7 +169,7 @@ export async function updateProduct(id: string, raw: unknown, actorId?: string) 
   if (input.unit !== undefined)        data.unit        = input.unit.trim();
   if (input.status !== undefined)      data.status      = input.status;
 
-  const updated = prisma.product.update({ where: { id }, data, select: PRODUCT_SELECT });
+  const updated = prisma.product.update({ where: { id }, data, select: PRODUCT_DETAIL_SELECT });
 
   if (actorId) {
     void updated.then((p) => audit({

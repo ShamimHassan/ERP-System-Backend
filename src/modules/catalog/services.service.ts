@@ -16,8 +16,15 @@ export const updateServiceSchema = z.object({
   status:      z.nativeEnum(UserStatus).optional(),
 }).strict();
 
-/* ─── Select shape ────────────────────────────────────────────────────────── */
-const SERVICE_SELECT = {
+/* ─── Select shapes ────────────────────────────────────────────────────────── */
+const SERVICE_LIST_SELECT = {
+  id:        true,
+  name:      true,
+  status:    true,
+  createdAt: true,
+} as const;
+
+const SERVICE_DETAIL_SELECT = {
   id:          true,
   name:        true,
   description: true,
@@ -35,7 +42,7 @@ export async function listServices(query: Record<string, unknown>) {
   );
 
   const [rows, total] = await Promise.all([
-    prisma.service.findMany({ where, orderBy, skip, take, select: SERVICE_SELECT }),
+    prisma.service.findMany({ where, orderBy, skip, take, select: SERVICE_LIST_SELECT }),
     prisma.service.count({ where }),
   ]);
 
@@ -44,7 +51,7 @@ export async function listServices(query: Record<string, unknown>) {
 
 /* ─── Get one ─────────────────────────────────────────────────────────────── */
 export async function getService(id: string) {
-  const svc = await prisma.service.findUnique({ where: { id }, select: SERVICE_SELECT });
+  const svc = await prisma.service.findUnique({ where: { id }, select: SERVICE_DETAIL_SELECT });
   if (!svc) throw Object.assign(new Error('Service not found'), { code: 'NOT_FOUND', status: 404 });
   return svc;
 }
@@ -62,7 +69,7 @@ export async function createService(raw: unknown) {
 
   return prisma.service.create({
     data: { name: input.name.trim(), description: input.description ?? null, status: input.status },
-    select: SERVICE_SELECT,
+    select: SERVICE_DETAIL_SELECT,
   });
 }
 
@@ -85,7 +92,7 @@ export async function updateService(id: string, raw: unknown) {
   if (input.description !== undefined) data.description = input.description;
   if (input.status !== undefined) data.status = input.status;
 
-  return prisma.service.update({ where: { id }, data, select: SERVICE_SELECT });
+  return prisma.service.update({ where: { id }, data, select: SERVICE_DETAIL_SELECT });
 }
 
 /* ─── Delete ──────────────────────────────────────────────────────────────── */

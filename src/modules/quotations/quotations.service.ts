@@ -59,14 +59,32 @@ export interface Actor {
   ip?: string | null;
 }
 
-/* ─── Select shapes ───────────────────────────────────────────────────────── */
+/* ─── Select shapes ─────────────────────────────────────────────────────────
+ * LIST_SELECT   → header only; no items array, no 500-char paymentTerms,
+ *                 no 2000-char notes. List pages show a table of quotations
+ *                 and the full items are only fetched when user clicks OPEN.
+ * ITEM_SELECT   → reusable line-item shape (kept for detail view).
+ * DETAIL_SELECT → full header + items + nested relations + full long-text
+ *                 columns (used by GET /:id, create, update, convert, etc.).
+ */
 const QUOTATION_ITEM_SELECT = {
   id: true, productId: true, quantity: true, unitPrice: true,
   discount: true, tax: true, lineTotal: true,
   product: { select: { id: true, name: true, unit: true } },
 } as const;
 
-const QUOTATION_SELECT = {
+const QUOTATION_LIST_SELECT = {
+  id: true, quotationNumber: true, quotationDate: true, expiryDate: true,
+  discountTotal: true, taxTotal: true, grandTotal: true,
+  status: true, createdAt: true,
+  customerId: true, opportunityId: true, managerId: true, marketingPersonId: true,
+  customer: { select: { id: true, companyName: true, contactPerson: true } },
+  opportunity: { select: { id: true, name: true, stage: true } },
+  manager:         { select: { id: true, name: true } },
+  marketingPerson: { select: { id: true, name: true } },
+} as const;
+
+const QUOTATION_DETAIL_SELECT = {
   id: true, quotationNumber: true, quotationDate: true, expiryDate: true,
   discountTotal: true, taxTotal: true, grandTotal: true,
   paymentTerms: true, notes: true, status: true, createdAt: true, updatedAt: true,
@@ -281,7 +299,7 @@ export async function listQuotations(
   const [rows, total] = await Promise.all([
     prisma.quotation.findMany({
       where, orderBy: orderBy as Prisma.QuotationOrderByWithRelationInput[],
-      skip, take, select: QUOTATION_SELECT,
+      skip, take, select: QUOTATION_LIST_SELECT,
     }),
     prisma.quotation.count({ where }),
   ]);
@@ -293,7 +311,7 @@ export async function listQuotations(
 export async function getQuotation(id: string, visibleUserIds: string[] | null) {
   const q = await prisma.quotation.findFirst({
     where: { AND: [{ id }, ownerFilter('marketingPersonId', visibleUserIds)] },
-    select: QUOTATION_SELECT,
+    select: QUOTATION_DETAIL_SELECT,
   });
   if (!q) notFound();
   return q;
@@ -375,7 +393,7 @@ export async function createQuotation(raw: unknown, actor: Actor) {
           })),
         },
       },
-      select: QUOTATION_SELECT,
+      select: QUOTATION_DETAIL_SELECT,
     });
     return header;
   });
@@ -514,7 +532,7 @@ export async function updateQuotation(
   if (input.marketingPersonId !== undefined && input.marketingPersonId !== null) data.marketingPersonId = input.marketingPersonId;
   if (grandTotal              !== undefined) data.grandTotal        = grandTotal;
 
-  const updated = prisma.quotation.update({ where: { id }, data, select: QUOTATION_SELECT });
+  const updated = prisma.quotation.update({ where: { id }, data, select: QUOTATION_DETAIL_SELECT });
 
   void updated.then(async (q) => {
     const changes = buildFieldChanges(
@@ -819,7 +837,7 @@ export async function approveQuotation(
     const updated = await tx.quotation.update({
       where: { id: quotationId },
       data: { status: QuotationStatus.APPROVED },
-      select: QUOTATION_SELECT,
+      select: QUOTATION_DETAIL_SELECT,
     });
 
     return {
@@ -899,7 +917,7 @@ export async function rejectQuotation(
     const updated = await tx.quotation.update({
       where: { id: quotationId },
       data: { status: QuotationStatus.REJECTED },
-      select: QUOTATION_SELECT,
+      select: QUOTATION_DETAIL_SELECT,
     });
 
     return {

@@ -16,13 +16,26 @@ export const updateCategorySchema = z.object({
   status:    z.nativeEnum(UserStatus).optional(),
 }).strict();
 
-/* ─── Select shape ────────────────────────────────────────────────────────── */
-const CATEGORY_SELECT = {
+/* ─── Select shapes ──────────────────────────────────────────────────────────
+ * LIST_SELECT  → light: category row + one-level service name join (small, <100 rows).
+ * DETAIL_SELECT→ same shape today (categories have few fields) — keep for future-proofing.
+ */
+const CATEGORY_LIST_SELECT = {
+  id:         true,
+  name:       true,
+  status:     true,
+  createdAt:  true,
+  serviceId:  true,
+  service:    { select: { id: true, name: true } },
+} as const;
+
+const CATEGORY_DETAIL_SELECT = {
   id:        true,
   name:      true,
   status:    true,
   createdAt: true,
   updatedAt: true,
+  serviceId: true,
   service:   { select: { id: true, name: true } },
 } as const;
 
@@ -37,7 +50,7 @@ export async function listCategories(query: Record<string, unknown>) {
     applyListQuery<Prisma.ProductCategoryWhereInput>(query, extraWhere, ['name']);
 
   const [rows, total] = await Promise.all([
-    prisma.productCategory.findMany({ where, orderBy, skip, take, select: CATEGORY_SELECT }),
+    prisma.productCategory.findMany({ where, orderBy, skip, take, select: CATEGORY_LIST_SELECT }),
     prisma.productCategory.count({ where }),
   ]);
 
@@ -46,7 +59,7 @@ export async function listCategories(query: Record<string, unknown>) {
 
 /* ─── Get one ─────────────────────────────────────────────────────────────── */
 export async function getCategory(id: string) {
-  const cat = await prisma.productCategory.findUnique({ where: { id }, select: CATEGORY_SELECT });
+  const cat = await prisma.productCategory.findUnique({ where: { id }, select: CATEGORY_DETAIL_SELECT });
   if (!cat) throw Object.assign(new Error('Category not found'), { code: 'NOT_FOUND', status: 404 });
   return cat;
 }
@@ -72,7 +85,7 @@ export async function createCategory(raw: unknown) {
 
   return prisma.productCategory.create({
     data: { serviceId: input.serviceId, name: input.name.trim(), status: input.status },
-    select: CATEGORY_SELECT,
+    select: CATEGORY_DETAIL_SELECT,
   });
 }
 
@@ -109,7 +122,7 @@ export async function updateCategory(id: string, raw: unknown) {
 
   if (input.status !== undefined) data.status = input.status;
 
-  return prisma.productCategory.update({ where: { id }, data, select: CATEGORY_SELECT });
+  return prisma.productCategory.update({ where: { id }, data, select: CATEGORY_DETAIL_SELECT });
 }
 
 /* ─── Delete ──────────────────────────────────────────────────────────────── */

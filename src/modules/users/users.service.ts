@@ -226,7 +226,7 @@ export async function createUser(
     },
     select: USER_SELECT,
   });
-  await audit({
+  void audit({
     actor,
     module: 'USERS',
     action: 'CREATE',
@@ -377,7 +377,7 @@ export async function updateUser(
       } as unknown as Prisma.InputJsonValue,
     });
   }
-  await Promise.all(audits.map((a) => audit(a)));
+  void Promise.all(audits.map((a) => audit(a)));
   return mapResult(updated);
 }
 
@@ -413,7 +413,7 @@ export async function deleteUser(
     where: { id },
     data: { deletedAt: new Date(), status: UserStatus.INACTIVE },
   });
-  await audit({
+  void audit({
     actor,
     module: 'USERS',
     action: 'DELETE',

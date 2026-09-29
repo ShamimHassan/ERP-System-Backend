@@ -38,20 +38,32 @@ export interface Actor {
   ip?: string | null;
 }
 
-/* ─── Select shape ────────────────────────────────────────────────────────── */
-const LEAD_SELECT = {
+/* ─── Select shapes ─────────────────────────────────────────────────────────
+ * LIST_SELECT  → minimal columns actually displayed on the leads table.
+ *                Avoids fetching heavy text columns + unnecessary joins.
+ * DETAIL_SELECT→ heavy: all fields + relations (used by GET /:id + create/update).
+ */
+const LEAD_LIST_SELECT = {
+  id: true, leadName: true, companyName: true, phone: true,
+  email: true, leadSource: true, estimatedValue: true,
+  priority: true, status: true, nextFollowUp: true,
+  createdAt: true, serviceId: true, categoryId: true, productId: true,
+  managerId: true, marketingPersonId: true,
+} as const;
+
+const LEAD_DETAIL_SELECT = {
   id: true, leadName: true, companyName: true, phone: true, email: true,
   address: true, leadSource: true, estimatedValue: true,
   priority: true, status: true, nextFollowUp: true, notes: true,
   createdAt: true, updatedAt: true,
   serviceId: true, categoryId: true, productId: true,
-  service:  { select: { id: true, name: true } },
-  category: { select: { id: true, name: true } },
-  product:  { select: { id: true, name: true } },
+  service:        { select: { id: true, name: true } },
+  category:       { select: { id: true, name: true } },
+  product:        { select: { id: true, name: true } },
   managerId: true,
   manager:        { select: { id: true, name: true, email: true } },
   marketingPersonId: true,
-  marketingPerson: { select: { id: true, name: true, email: true } },
+  marketingPerson:{ select: { id: true, name: true, email: true } },
 } as const;
 
 /* ─── helpers ─────────────────────────────────────────────────────────────── */
@@ -196,7 +208,7 @@ export async function listLeads(
     );
 
   const [rows, total] = await Promise.all([
-    prisma.lead.findMany({ where, orderBy: orderBy as Prisma.LeadOrderByWithRelationInput[], skip, take, select: LEAD_SELECT }),
+    prisma.lead.findMany({ where, orderBy: orderBy as Prisma.LeadOrderByWithRelationInput[], skip, take, select: LEAD_LIST_SELECT }),
     prisma.lead.count({ where }),
   ]);
 
@@ -207,7 +219,7 @@ export async function listLeads(
 export async function getLead(id: string, visibleUserIds: string[] | null) {
   const lead = await prisma.lead.findFirst({
     where: { AND: [{ id }, { deletedAt: null }, ownerFilter('marketingPersonId', visibleUserIds)] },
-    select: LEAD_SELECT,
+    select: LEAD_DETAIL_SELECT,
   });
   if (!lead) notFound();
   return lead;
@@ -242,7 +254,7 @@ export async function createLead(raw: unknown, actor: Actor) {
       nextFollowUp:      input.nextFollowUp ? new Date(input.nextFollowUp) : null,
       notes:             input.notes?.trim() ?? null,
     },
-    select: LEAD_SELECT,
+    select: LEAD_DETAIL_SELECT,
   }).then((created) => {
     audit({
       actor,
@@ -357,7 +369,7 @@ export async function updateLead(
   if (input.managerId        !== undefined) data.managerId        = input.managerId ?? existing.managerId;
   if (input.marketingPersonId !== undefined && input.marketingPersonId !== null) data.marketingPersonId = input.marketingPersonId;
 
-  const updated = prisma.lead.update({ where: { id }, data, select: LEAD_SELECT });
+  const updated = prisma.lead.update({ where: { id }, data, select: LEAD_DETAIL_SELECT });
 
   // Fire audits in parallel with return to avoid latency penalty
   void updated.then(async (u) => {

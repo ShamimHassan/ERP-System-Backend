@@ -30,8 +30,17 @@ export interface Actor {
   ip?: string | null;
 }
 
-/* ─── Select shape ────────────────────────────────────────────────────────── */
-const CUSTOMER_SELECT = {
+/* ─── Select shapes ──────────────────────────────────────────────────────────
+ * LIST_SELECT   → lightweight for the table view (no long-text columns).
+ * DETAIL_SELECT → heavy: all fields + full relations.
+ */
+const CUSTOMER_LIST_SELECT = {
+  id: true, customerType: true, companyName: true, contactPerson: true,
+  phone: true, email: true, status: true, createdAt: true,
+  managerId: true, marketingPersonId: true,
+} as const;
+
+const CUSTOMER_DETAIL_SELECT = {
   id: true, customerType: true, companyName: true, contactPerson: true,
   phone: true, email: true, address: true, billingAddress: true,
   taxVatNo: true, status: true, createdAt: true, updatedAt: true,
@@ -39,7 +48,7 @@ const CUSTOMER_SELECT = {
   managerId: true,
   manager:        { select: { id: true, name: true, email: true } },
   marketingPersonId: true,
-  marketingPerson: { select: { id: true, name: true, email: true } },
+  marketingPerson:{ select: { id: true, name: true, email: true } },
 } as const;
 
 /* ─── helpers ─────────────────────────────────────────────────────────────── */
@@ -105,7 +114,7 @@ export async function listCustomers(
     applyListQuery<Prisma.CustomerWhereInput>(query, base, ['contactPerson', 'companyName', 'phone', 'email']);
 
   const [rows, total] = await Promise.all([
-    prisma.customer.findMany({ where, orderBy: orderBy as Prisma.CustomerOrderByWithRelationInput[], skip, take, select: CUSTOMER_SELECT }),
+    prisma.customer.findMany({ where, orderBy: orderBy as Prisma.CustomerOrderByWithRelationInput[], skip, take, select: CUSTOMER_LIST_SELECT }),
     prisma.customer.count({ where }),
   ]);
 
@@ -116,7 +125,7 @@ export async function listCustomers(
 export async function getCustomer(id: string, visibleUserIds: string[] | null) {
   const cust = await prisma.customer.findFirst({
     where: { AND: [{ id }, { deletedAt: null }, ownerFilter('marketingPersonId', visibleUserIds)] },
-    select: CUSTOMER_SELECT,
+    select: CUSTOMER_DETAIL_SELECT,
   });
   if (!cust) notFound();
   return cust;
@@ -141,7 +150,7 @@ export async function createCustomer(raw: unknown, actor: Actor) {
       marketingPersonId,
       status:            input.status,
     },
-    select: CUSTOMER_SELECT,
+    select: CUSTOMER_DETAIL_SELECT,
   }).then((c) => {
     void audit({
       actor,
@@ -223,7 +232,7 @@ export async function updateCustomer(
   if (input.managerId         !== undefined) data.managerId         = input.managerId ?? existing.managerId;
   if (input.marketingPersonId !== undefined && input.marketingPersonId !== null) data.marketingPersonId = input.marketingPersonId;
 
-  const updated = prisma.customer.update({ where: { id }, data, select: CUSTOMER_SELECT });
+  const updated = prisma.customer.update({ where: { id }, data, select: CUSTOMER_DETAIL_SELECT });
 
   void updated.then(async (c) => {
     const changes = buildFieldChanges(

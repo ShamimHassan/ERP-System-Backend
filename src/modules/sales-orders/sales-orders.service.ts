@@ -52,14 +52,32 @@ export interface Actor {
   ip?: string | null;
 }
 
-/* ─── Select shapes ───────────────────────────────────────────────────────── */
+/* ─── Select shapes ─────────────────────────────────────────────────────────
+ * LIST_SELECT   → header-only summary; no items array, no 500-char
+ *                 paymentTerms, no invoice join. Every paginated row in
+ *                 the list view was pulling every line item — very heavy
+ *                 once there are 20+ quotations with 5–10 items each.
+ * ITEM_SELECT   → reusable line-item shape for detail view.
+ * DETAIL_SELECT → full header + items + invoice + full nested relations.
+ */
 const SALES_ORDER_ITEM_SELECT = {
   id: true, productId: true, quantity: true, unitPrice: true,
   discount: true, tax: true, lineTotal: true,
   product: { select: { id: true, name: true, unit: true } },
 } as const;
 
-const SALES_ORDER_SELECT = {
+const SALES_ORDER_LIST_SELECT = {
+  id: true, orderNumber: true, orderDate: true, expectedActivationDate: true,
+  discountTotal: true, taxTotal: true, grandTotal: true,
+  status: true, createdAt: true,
+  customerId: true, quotationId: true, managerId: true, marketingPersonId: true,
+  customer: { select: { id: true, companyName: true, contactPerson: true } },
+  quotation: { select: { id: true, quotationNumber: true, status: true } },
+  manager:         { select: { id: true, name: true } },
+  marketingPerson: { select: { id: true, name: true } },
+} as const;
+
+const SALES_ORDER_DETAIL_SELECT = {
   id: true, orderNumber: true, orderDate: true, expectedActivationDate: true,
   discountTotal: true, taxTotal: true, grandTotal: true,
   paymentTerms: true, status: true, createdAt: true, updatedAt: true,
@@ -204,7 +222,7 @@ export async function listSalesOrders(
   const [rows, total] = await Promise.all([
     prisma.salesOrder.findMany({
       where, orderBy: orderBy as Prisma.SalesOrderOrderByWithRelationInput[],
-      skip, take, select: SALES_ORDER_SELECT,
+      skip, take, select: SALES_ORDER_LIST_SELECT,
     }),
     prisma.salesOrder.count({ where }),
   ]);
@@ -216,7 +234,7 @@ export async function listSalesOrders(
 export async function getSalesOrder(id: string, visibleUserIds: string[] | null) {
   const so = await prisma.salesOrder.findFirst({
     where: { AND: [{ id }, ownerFilter('marketingPersonId', visibleUserIds)] },
-    select: SALES_ORDER_SELECT,
+    select: SALES_ORDER_DETAIL_SELECT,
   });
   if (!so) notFound();
   return so;
@@ -354,7 +372,7 @@ export async function createSalesOrder(raw: unknown, actor: Actor) {
     } as unknown as Prisma.SalesOrderCreateArgs['data'];
     const header = await tx.salesOrder.create({
       data: createData,
-      select: SALES_ORDER_SELECT,
+      select: SALES_ORDER_DETAIL_SELECT,
     });
     return header;
   });
@@ -452,7 +470,7 @@ export async function updateSalesOrder(
   if (input.marketingPersonId     !== undefined && input.marketingPersonId !== null) data.marketingPersonId = input.marketingPersonId;
   if (grandTotal                  !== undefined) data.grandTotal            = grandTotal;
 
-  const updated = prisma.salesOrder.update({ where: { id }, data, select: SALES_ORDER_SELECT });
+  const updated = prisma.salesOrder.update({ where: { id }, data, select: SALES_ORDER_DETAIL_SELECT });
 
   void updated.then(async (so) => {
     const changes = buildFieldChanges(
@@ -613,7 +631,7 @@ export async function cancelSalesOrder(
   const cancelled = await prisma.salesOrder.update({
     where: { id },
     data: { status: SalesOrderStatus.CANCELLED },
-    select: SALES_ORDER_SELECT,
+    select: SALES_ORDER_DETAIL_SELECT,
   });
 
   void audit({

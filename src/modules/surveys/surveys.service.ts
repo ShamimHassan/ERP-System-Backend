@@ -38,8 +38,28 @@ export interface Actor {
   ip?: string | null;
 }
 
-/* ─── Select shape ────────────────────────────────────────────────────────── */
-const SURVEY_SELECT = {
+/* ─── Select shapes ──────────────────────────────────────────────────────────
+ * LIST_SELECT   → drop the four 2000-char text columns (requirement,
+ *                 technicalRequirement, result, notes) + JSON attachments.
+ *                 List table shows status/location/date only; heavy fields
+ *                 are fetched once per detail-view click.
+ * DETAIL_SELECT → full fields + all 6 relations for view/edit/creation.
+ */
+const SURVEY_LIST_SELECT = {
+  id: true, location: true, quantity: true, budget: true,
+  surveyDate: true, assignedPersonId: true,
+  status: true, createdAt: true,
+  customerId: true, leadId: true, opportunityId: true,
+  serviceId: true, productId: true,
+  customer:    { select: { id: true, companyName: true } },
+  lead:        { select: { id: true, leadName: true } },
+  opportunity: { select: { id: true, name: true } },
+  service:     { select: { id: true, name: true } },
+  product:     { select: { id: true, name: true } },
+  assignedPerson: { select: { id: true, name: true, role: true } },
+} as const;
+
+const SURVEY_DETAIL_SELECT = {
   id: true, location: true, requirement: true, technicalRequirement: true,
   quantity: true, budget: true, surveyDate: true, assignedPersonId: true,
   result: true, notes: true, attachments: true, status: true,
@@ -158,7 +178,7 @@ export async function listSurveys(
   const [rows, total] = await Promise.all([
     prisma.survey.findMany({
       where, orderBy: orderBy as Prisma.SurveyOrderByWithRelationInput[],
-      skip, take, select: SURVEY_SELECT,
+      skip, take, select: SURVEY_LIST_SELECT,
     }),
     prisma.survey.count({ where }),
   ]);
@@ -170,7 +190,7 @@ export async function listSurveys(
 export async function getSurvey(id: string, visibleUserIds: string[] | null) {
   const s = await prisma.survey.findFirst({
     where: { AND: [{ id }, ownerFilter('assignedPersonId', visibleUserIds)] },
-    select: SURVEY_SELECT,
+    select: SURVEY_DETAIL_SELECT,
   });
   if (!s) notFound();
   return s;
@@ -204,7 +224,7 @@ export async function createSurvey(raw: unknown, actor: Actor) {
       attachments:          (input.attachments as Prisma.InputJsonValue) ?? undefined,
       status:               input.status,
     },
-    select: SURVEY_SELECT,
+    select: SURVEY_DETAIL_SELECT,
   }).then((s) => {
     void audit({
       actor,
@@ -282,7 +302,7 @@ export async function updateSurvey(
   if (input.attachments          !== undefined) data.attachments          = (input.attachments as Prisma.InputJsonValue) ?? null;
   if (input.status               !== undefined) data.status               = input.status;
 
-  const updated = prisma.survey.update({ where: { id }, data, select: SURVEY_SELECT });
+  const updated = prisma.survey.update({ where: { id }, data, select: SURVEY_DETAIL_SELECT });
 
   void updated.then(async (s) => {
     const changes = buildFieldChanges(

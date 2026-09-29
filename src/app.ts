@@ -78,32 +78,40 @@ app.use(
   })
 );
 
-// ── Helmet — base security headers for all routes ─────────────────────────
-app.use(
-  helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc:  ["'self'"],
-        styleSrc:   ["'self'"],
-        imgSrc:     ["'self'", 'data:'],
-        fontSrc:    ["'self'"],
-        connectSrc: ["'self'"],
-        frameSrc:   ["'none'"],
-        objectSrc:  ["'none'"],
-      },
-    },
-    hsts: { maxAge: 31536000, includeSubDomains: true },
-    noSniff: true,
-    xssFilter: true,
-  })
-);
-
 app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 // ── Body parsers — enforce hard size limits to prevent payload bloat ───────
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+// ── Helmet — base security headers for all routes EXCEPT /api-docs*
+// The Swagger UI route has its own relaxed helmet config mounted below.
+// We skip strict helmet for docs paths because Swagger uses inline scripts,
+// eval, and blob: URLs that the global strict CSP would block.
+const SWAGGER_PREFIX = '/api-docs';
+const strictHelmet = helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc:  ["'self'"],
+      styleSrc:   ["'self'"],
+      imgSrc:     ["'self'", 'data:'],
+      fontSrc:    ["'self'"],
+      connectSrc: ["'self'"],
+      frameSrc:   ["'none'"],
+      objectSrc:  ["'none'"],
+    },
+  },
+  hsts: { maxAge: 31536000, includeSubDomains: true },
+  noSniff: true,
+  xssFilter: true,
+});
+app.use((req, res, next) => {
+  if (req.path.startsWith(SWAGGER_PREFIX) || req.path === '/api-docs.json') {
+    return next();
+  }
+  return strictHelmet(req, res, next);
+});
 
 // ══════════════════════════════════════════════════════════════════════════
 // RATE LIMITERS
@@ -168,24 +176,38 @@ app.use('/api/auth/refresh', authLimiter);
 app.use('/api', apiLimiter);
 
 // ── Swagger UI — /api-docs ─────────────────────────────────────────────────
-// Use a custom helmet config for the docs route to allow inline scripts/styles
+// Relaxed helmet CSP for docs only. Global strict helmet (mounted above) is
+// SKIPPED for these paths so this is the only CSP that applies here.
+// Swagger UI requires:
+//   - 'unsafe-inline' + 'unsafe-eval' for the bootstrap script that inlines
+//     the swaggerSpec JSON and evals it into the UI
+//   - blob: for workers that some swagger-ui builds spawn
+//   - https: in connectSrc so "Try it out" can call any HTTPS API (useful
+//     when production URL differs from the server definition)
 app.use(
   '/api-docs',
   helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        scriptSrcAttr: ["'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         imgSrc: ["'self'", 'data:', 'https:'],
-        fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+        connectSrc: ["'self'", 'https:'],
+        workerSrc: ["'self'", 'blob:'],
       },
     },
+    hsts: { maxAge: 31536000, includeSubDomains: true },
+    noSniff: true,
+    xssFilter: true,
   }),
   swaggerUi.serve,
   swaggerUi.setup(swaggerSpec, {
     customSiteTitle: 'ERP Sales & Marketing API Docs',
     swaggerOptions: { persistAuthorization: true },
+    explorer: true,
   })
 );
 
