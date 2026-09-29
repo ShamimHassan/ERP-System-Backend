@@ -3,6 +3,7 @@ import express, {
   type Request,
   type Response,
 } from 'express';
+import path from 'node:path';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -176,14 +177,39 @@ app.use('/api/auth/refresh', authLimiter);
 app.use('/api', apiLimiter);
 
 // ── Swagger UI — /api-docs ─────────────────────────────────────────────────
-// Relaxed helmet CSP for docs only. Global strict helmet (mounted above) is
-// SKIPPED for these paths so this is the only CSP that applies here.
-// Swagger UI requires:
-//   - 'unsafe-inline' + 'unsafe-eval' for the bootstrap script that inlines
-//     the swaggerSpec JSON and evals it into the UI
-//   - blob: for workers that some swagger-ui builds spawn
-//   - https: in connectSrc so "Try it out" can call any HTTPS API (useful
-//     when production URL differs from the server definition)
+//
+// Vercel serverless compatibility notes (this is why this section is long):
+// 1. Global strict helmet CSP (mounted above) is SKIPPED for /api-docs* so
+//    it can't add second, stricter CSP headers on top of our relaxed one.
+// 2. noSniff is DISABLED here — Vercel's @vercel/node runtime sometimes
+//    serves express.static files with empty / wrong Content-Type. With
+//    `X-Content-Type-Options: nosniff` the browser would refuse to execute
+//    .js/.css loaded from swagger-ui-dist node_modules folder and leave
+//    the page blank with `SwaggerUIBundle is not defined`.
+// 3. We inject a tiny middleware before swaggerUi.serve that FORCE-SETS the
+//    correct Content-Type header for every known static asset extension
+//    (.js / .css / .svg / .png / .map / fonts etc). Belt + suspenders.
+const DOCS_MIME: Record<string, string> = {
+  '.js':    'application/javascript; charset=utf-8',
+  '.mjs':   'application/javascript; charset=utf-8',
+  '.css':   'text/css; charset=utf-8',
+  '.html':  'text/html; charset=utf-8',
+  '.svg':   'image/svg+xml',
+  '.png':   'image/png',
+  '.ico':   'image/x-icon',
+  '.map':   'application/json; charset=utf-8',
+  '.woff':  'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf':   'font/ttf',
+  '.eot':   'application/vnd.ms-fontobject',
+};
+app.use('/api-docs', (req, res, next) => {
+  const ext = path.posix.extname(req.path).toLowerCase();
+  if (DOCS_MIME[ext]) {
+    res.setHeader('Content-Type', DOCS_MIME[ext]);
+  }
+  next();
+});
 app.use(
   '/api-docs',
   helmet({
@@ -200,7 +226,7 @@ app.use(
       },
     },
     hsts: { maxAge: 31536000, includeSubDomains: true },
-    noSniff: true,
+    noSniff: false,
     xssFilter: true,
   }),
   swaggerUi.serve,
