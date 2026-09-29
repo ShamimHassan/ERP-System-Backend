@@ -3,12 +3,10 @@ import express, {
   type Request,
   type Response,
 } from 'express';
-import path from 'node:path';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
-import swaggerUi from 'swagger-ui-express';
 import { env } from './config/env';
 import { fail, ok } from './lib/response';
 import { swaggerSpec } from './docs/swagger';
@@ -178,49 +176,71 @@ app.use('/api', apiLimiter);
 
 // ── Swagger UI — /api-docs ─────────────────────────────────────────────────
 //
-// Vercel serverless compatibility notes (this is why this section is long):
-// 1. Global strict helmet CSP (mounted above) is SKIPPED for /api-docs* so
-//    it can't add second, stricter CSP headers on top of our relaxed one.
-// 2. noSniff is DISABLED here — Vercel's @vercel/node runtime sometimes
-//    serves express.static files with empty / wrong Content-Type. With
-//    `X-Content-Type-Options: nosniff` the browser would refuse to execute
-//    .js/.css loaded from swagger-ui-dist node_modules folder and leave
-//    the page blank with `SwaggerUIBundle is not defined`.
-// 3. We inject a tiny middleware before swaggerUi.serve that FORCE-SETS the
-//    correct Content-Type header for every known static asset extension
-//    (.js / .css / .svg / .png / .map / fonts etc). Belt + suspenders.
-const DOCS_MIME: Record<string, string> = {
-  '.js':    'application/javascript; charset=utf-8',
-  '.mjs':   'application/javascript; charset=utf-8',
-  '.css':   'text/css; charset=utf-8',
-  '.html':  'text/html; charset=utf-8',
-  '.svg':   'image/svg+xml',
-  '.png':   'image/png',
-  '.ico':   'image/x-icon',
-  '.map':   'application/json; charset=utf-8',
-  '.woff':  'font/woff',
-  '.woff2': 'font/woff2',
-  '.ttf':   'font/ttf',
-  '.eot':   'application/vnd.ms-fontobject',
-};
-app.use('/api-docs', (req, res, next) => {
-  const ext = path.posix.extname(req.path).toLowerCase();
-  if (DOCS_MIME[ext]) {
-    res.setHeader('Content-Type', DOCS_MIME[ext]);
-  }
-  next();
-});
+// CDN-backed implementation — works reliably on Vercel serverless.
+//
+// Rationale: swagger-ui-express's swaggerUi.serve is express.static pointing
+// at swagger-ui-dist inside node_modules. On Vercel's @vercel/node runtime
+// the resolved path to those files frequently does not exist in the bundled
+// serverless function, so swagger-ui-bundle.js / swagger-ui.css come back as
+// ERR_ABORTED and the page stays blank with "ReferenceError: SwaggerUIBundle
+// is not defined". We instead serve a tiny hand-rolled HTML page that loads
+// Swagger UI directly from the unpkg CDN and fetches our OpenAPI spec from
+// /api-docs.json. No static file serving required.
+//
+// Global strict helmet CSP (mounted above) is SKIPPED for /api-docs* paths;
+// the CSP configured here explicitly allows unpkg CDN assets + the inline
+// bootstrap script that Swagger UI needs to initialize from our spec URL.
+const SWAGGER_UI_CDN = 'https://unpkg.com/swagger-ui-dist@5';
+const SWAGGER_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="description" content="ERP Sales & Marketing API docs" />
+    <title>ERP Sales & Marketing API Docs</title>
+    <link rel="stylesheet" href="${SWAGGER_UI_CDN}/swagger-ui.css" />
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <script src="${SWAGGER_UI_CDN}/swagger-ui-bundle.js" crossorigin></script>
+    <script src="${SWAGGER_UI_CDN}/swagger-ui-standalone-preset.js" crossorigin></script>
+    <script>
+      window.ui = SwaggerUIBundle({
+        url: '/api-docs.json',
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+        plugins: [SwaggerUIBundle.plugins.DownloadUrl],
+        layout: 'StandaloneLayout',
+        filter: true,
+        displayRequestDuration: true,
+        persistAuthorization: true,
+        tryItOutEnabled: true,
+      });
+    </script>
+  </body>
+</html>`;
 app.use(
   '/api-docs',
   helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        scriptSrc: [
+          "'self'",
+          "'unsafe-inline'",
+          "'unsafe-eval'",
+          'https://unpkg.com',
+        ],
         scriptSrcAttr: ["'unsafe-inline'"],
-        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        styleSrc: [
+          "'self'",
+          "'unsafe-inline'",
+          'https://fonts.googleapis.com',
+          'https://unpkg.com',
+        ],
         imgSrc: ["'self'", 'data:', 'https:'],
-        fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:', 'https://unpkg.com'],
         connectSrc: ["'self'", 'https:'],
         workerSrc: ["'self'", 'blob:'],
       },
@@ -229,15 +249,18 @@ app.use(
     noSniff: false,
     xssFilter: true,
   }),
-  swaggerUi.serve,
-  swaggerUi.setup(swaggerSpec, {
-    customSiteTitle: 'ERP Sales & Marketing API Docs',
-    swaggerOptions: { persistAuthorization: true },
-    explorer: true,
-  })
 );
+// /api-docs/ (trailing slash) → HTML
+app.get('/api-docs/', (_req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(SWAGGER_HTML);
+});
+// /api-docs (no trailing slash) → redirect to /api-docs/
+app.get('/api-docs', (_req, res) => {
+  res.redirect('/api-docs/');
+});
 
-// ── JSON spec endpoint (useful for code-gen tools) ─────────────────────────
+// ── JSON spec endpoint (useful for code-gen tools + Swagger UI fetch) ─────
 app.get('/api-docs.json', (_req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.send(swaggerSpec);
